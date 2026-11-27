@@ -48,6 +48,27 @@ were:
 
 ![A split in 2θ on the detector, the rocking curve that hides it, and two domains in reciprocal space](../assets/generated/split_peaks.svg)
 
+## Against field or temperature
+
+[`Catalogue.split_series`][cristallina_scipp.catalogue.Catalogue.split_series] does this for every run of one or more
+catalogue groups and returns one point per run, like a [run series](../tutorials/run-series.md): `delta_bic`,
+`split`, the separations, widths and domain fraction, with the run's energy, field and transmission as coordinates.
+Without `reflection` it fits the detector projection along `axis`; with `reflection` it builds each run's
+reciprocal-space map from the catalogue's `[samples]` and `[[geometry]]` (see
+[the catalogue how-to](catalogue.md#samples-for-reciprocal-space)).
+
+```python
+--8<-- "docs/scripts/split_peaks.py:series"
+```
+
+```text
+--8<-- "docs/assets/generated/split_series.txt"
+```
+
+![Strain and tilt separation of the two domains against field](../assets/generated/split_series.svg)
+
+Plot separations only where `split` is True; elsewhere the data need one peak, and the two-peak numbers mean nothing.
+
 ## What to trust
 
 - **`delta_bic` first.** The separations and their errors mean something only when `split` is True. Two peaks closer
@@ -67,4 +88,4 @@ were:
   around the truth by their quoted errors. Scatter beyond Poisson (`dispersion` above 1) inflates them and weakens
   `delta_bic` accordingly.
 - **The full detector volume**, `(step, y, x)`, also works, but takes minutes and, with more parameters, gives weaker
-  evidence than the two projections. In reciprocal space a 3-D fit of a 24 × 24 × 24 map takes about half a minute.
+  evidence than the two projections. In reciprocal space a 3-D fit of a 24 × 24 × 24 map takes about a minute.

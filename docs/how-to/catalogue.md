@@ -61,6 +61,29 @@ describe; `status` flags runs still being written and runs a group lists that ar
 [experiment template](https://github.com/dtu-fysik-magnet/cristallina-scipp/blob/main/notebooks/experiment_template.ipynb)
 starts with this table.
 
+## Samples, for reciprocal space
+
+To map runs to hkl, the catalogue also needs the sample: its lattice and how it was mounted. Each `[samples]` entry
+holds the arguments of `cristallina.rsm.Sample`, and groups refer to it by their `sample` label:
+
+```toml
+[samples."S1"]
+lattice = { a = 0.694, b = 0.694, c = 0.6068, alp = 90, bet = 90, gam = 90 }   # nm, degrees
+surface_normal = [1, 0, 0]
+alpha0 = 45.7      # mounting offsets, degrees
+chi0 = -0.53
+offset = 0.0       # added to the rocking readback to give alpha
+
+[groups."energy 0T"]
+runs = "467-486"
+sample = "S1"
+```
+
+A remounted or realigned sample gets a new entry. The detector for each run comes from `[[geometry]]` and the run's
+motor positions ([`cat.detector(run)`][cristallina_scipp.catalogue.Catalogue.detector]), and
+[`cat.to_q(run, stack, reflection)`][cristallina_scipp.catalogue.Catalogue.to_q] adds h, k, l and the strain and
+tilts around a reflection to a reduced run.
+
 ## Share it during the experiment
 
 Several people edit the catalogue during a beamtime, often at once. A plain shared file loses edits (the last save

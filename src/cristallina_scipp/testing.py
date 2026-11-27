@@ -356,3 +356,77 @@ def split_rsm_stack(d_strain=0.0, d_tilt_1=0.0, d_tilt_2=0.0, ratio=0.5, sigma_s
     stack.variances = stack.values.copy()
     stack.coords["i0"] = sc.array(dims=["step"], values=i0)
     return stack
+
+
+SPLIT_CATALOGUE = """\
+# Synthetic split-reflection experiment written by cristallina_scipp.testing.split_peak_experiment.
+raw = "raw"
+
+[rois]
+"peak" = {{ left = 0, right = 64, bottom = 0, top = 64 }}
+
+[[geometry]]
+runs = "1-200"
+x0 = 32
+y0 = 32
+d0 = 0.568
+z0 = 0.0
+stt0 = 0.0
+
+[samples."S1"]
+lattice = {{ a = {a}, b = {a}, c = 0.7, alp = 90, bet = 90, gam = 90 }}
+surface_normal = [1, 0, 0]
+offset = 36.0   # rocking readback -18 deg is alpha 18 deg, where (2 0 0) diffracts
+
+[groups."split vs field"]
+runs = "{runs}"
+roi = "peak"
+sample = "S1"
+reflection = "200"
+"""
+
+
+def split_peak_experiment(base, fields=(0.0, 2.0, 3.0), strain_per_tesla=0.001, tilt_per_tesla=0.05,
+                          sigma_strain=0.0006, sigma_tilt=0.04, first_run=90, seed=7):
+    """Rocking scans through a reflection that splits with field, as files plus a catalogue with `[samples]`.
+
+    A tetragonal crystal (a = 0.5348 nm, so (2 0 0) sits at 2θ = 36° for the
+    7502 eV monochromator readback) whose (2 0 0) splits into two equal
+    domains `strain_per_tesla` × B apart in strain and `tilt_per_tesla` × B
+    apart (deg) in `tilt_1` (toward (0 0 1)). The counts come from the same
+    geometry the catalogue describes (`cristallina.rsm`; needs the `[rsm]`
+    extra), so `Catalogue.split_series(..., reflection=(2, 0, 0))` should
+    recover the splitting. Returns the catalogue path.
+    """
+    import scipp as sc
+
+    from .catalogue import Catalogue
+
+    base = Path(base)
+    base.mkdir(parents=True, exist_ok=True)
+    a = 0.53484
+    runs = list(range(first_run, first_run + len(fields)))
+    path = base / "experiment.toml"
+    path.write_text(SPLIT_CATALOGUE.format(a=a, runs=f"{runs[0]}-{runs[-1]}"))
+    rng = np.random.default_rng(seed)
+    thetas = np.arange(-18.5, -17.49, 0.025)
+    for run, field in zip(runs, fields):
+        pvs = [_pvs(7511.0, **{"SARES31-GPS:ROTTHETA": t, "SARES31-MAG-IPS1-Z:SIG_FLD": field}) for t in thetas]
+        # geometry first: a one-step placeholder run lets the catalogue read the motors
+        write_scan(base / "raw" / f"run{run:04}", thetas[:1], [_step(rng, 0, np.zeros(SHAPE), np.zeros(SHAPE), 7.511, 7.511)],
+                   name="SARES31-GPS:ROTTHETA", units="deg", pvs=pvs[:1])
+        cat = Catalogue.load(path)
+        template = sc.DataArray(
+            sc.zeros(dims=["step", "y", "x"], shape=[thetas.size, *SHAPE]),
+            coords={"readback": sc.array(dims=["step"], values=thetas, unit="deg"),
+                    "y": sc.arange("y", SHAPE[0], unit=None), "x": sc.arange("x", SHAPE[1], unit=None)})
+        q = cat.to_q(run, template, (2, 0, 0), toward=(0, 0, 1))
+        e, t1, t2 = (q.coords[c].values for c in ("strain", "tilt_1", "tilt_2"))
+        rate = np.full(e.shape, 0.002)
+        for sign in (-0.5, 0.5):
+            rate += 0.25 * np.exp(-0.5 * (((e - sign * strain_per_tesla * field) / sigma_strain) ** 2
+                                          + ((t1 - sign * tilt_per_tesla * field) / sigma_tilt) ** 2
+                                          + (t2 / sigma_tilt) ** 2))
+        steps = [_step(rng, i, np.full(SHAPE, 1e-4), rate[i], 7.511, 7.511) for i in range(thetas.size)]
+        write_scan(base / "raw" / f"run{run:04}", thetas, steps, name="SARES31-GPS:ROTTHETA", units="deg", pvs=pvs)
+    return path

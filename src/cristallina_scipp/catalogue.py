@@ -39,7 +39,7 @@ on different series then edit different files. For keeping it in git during
 an experiment, see `cristallina-catalogue setup` and the how-to.
 """
 
-SECTIONS = {"raw", "rois", "geometry", "groups"}
+SECTIONS = {"raw", "rois", "geometry", "groups", "samples"}
 
 
 def _files(path):
@@ -53,7 +53,7 @@ def _files(path):
 
 def _merge(files):
     """One document from several catalogue files; a name defined twice, or an unknown section, is an error."""
-    doc, origin = {"rois": {}, "groups": {}, "geometry": []}, {}
+    doc, origin = {"rois": {}, "groups": {}, "samples": {}, "geometry": []}, {}
     for f in files:
         try:
             part = tomllib.loads(f.read_text())
@@ -66,7 +66,7 @@ def _merge(files):
             if "raw" in doc and doc["raw"] != part["raw"]:
                 raise ValueError(f"{f.name}: raw = {part['raw']!r}, but {origin['raw']} says {doc['raw']!r}")
             doc["raw"], origin["raw"] = part["raw"], f.name
-        for section in ("rois", "groups"):
+        for section in ("rois", "groups", "samples"):
             for name, value in part.get(section, {}).items():
                 if name in doc[section]:
                     raise ValueError(f"{f.name}: {section[:-1]} {name!r} is also defined in {origin[section, name]}")
@@ -127,6 +127,7 @@ class Catalogue:
     raw: Path
     rois: dict[str, ROI] = field(default_factory=dict)
     groups: dict[str, dict] = field(default_factory=dict)
+    samples: dict[str, dict] = field(default_factory=dict)
     geometry_ranges: list[tuple[set[int], dict]] = field(default_factory=list)
     path: Path | None = None
     sha256: str | None = None  # of the file(s) as loaded, recorded in saved series
@@ -154,7 +155,8 @@ class Catalogue:
                     raise ValueError(f"runs {sorted(runs & other)[:5]} are in two [[geometry]] entries")
             geometry.append((runs, entry))
         groups = doc["groups"]
-        cat = cls(raw=folder / doc.get("raw", "."), rois=rois, groups=groups, geometry_ranges=geometry,
+        cat = cls(raw=folder / doc.get("raw", "."), rois=rois, groups=groups, samples=doc["samples"],
+                  geometry_ranges=geometry,
                   path=path, sha256=_digest(files, not path.is_dir()), commit=_git_commit(folder))
         for name in groups:  # fail on load, not halfway through a series
             for run in cat.runs(name):
@@ -242,6 +244,12 @@ class Catalogue:
         from . import channels
         from .series import run_series
 
+        groups, scans, rois, labels = self._collect(groups)
+        out = run_series(scans, detector or channels.JF, channels.JF_I0 if i0 is None else i0,
+                         roi=rois, labels=labels, **kwargs)
+        return self._provenance(out, groups)
+
+    def _collect(self, groups):
         groups = [groups] if isinstance(groups, str) else list(groups)
         scans, rois, labels = {}, {}, {}
         for group in groups:
@@ -251,13 +259,95 @@ class Catalogue:
                 scans[run] = self.scan(run)
                 rois[run] = self.roi(group, run)
                 labels[run] = {"group": group, **self.labels(group)}
-        out = run_series(scans, detector or channels.JF, channels.JF_I0 if i0 is None else i0,
-                         roi=rois, labels=labels, **kwargs)
+        return groups, scans, rois, labels
+
+    def _provenance(self, out, groups):
         out["settings"]["catalogue"] = str(self.path or "")
         out["settings"]["catalogue_sha256"] = self.sha256 or ""
         out["settings"]["catalogue_commit"] = self.commit
         out["settings"]["groups"] = ", ".join(groups)
         return out
+
+    def sample(self, name):
+        """A `cristallina.rsm.Sample` from `[samples."name"]` (needs the `[rsm]` extra).
+
+        The section holds the `Sample` arguments: `lattice` (`{a, b, c, alp,
+        bet, gam}`, nm and degrees), `surface_normal` (default `[0, 0, 1]`) and
+        the mounting offsets `alpha0`, `ov0`, `chi0` (degrees), plus `offset`,
+        added to the rocking readback to give `alpha`. A remounted sample is a
+        new entry.
+        """
+        import numpy as np
+        from cristallina import rsm as crsm
+
+        if name not in self.samples:
+            raise KeyError(f"sample {name!r} is not in [samples]")
+        spec = self.samples[name]
+        return crsm.Sample(dict(spec["lattice"]), name, surface_normal=np.array(spec.get("surface_normal", [0, 0, 1])),
+                           alpha0=spec.get("alpha0", 0), ov0=spec.get("ov0", 0), chi0=spec.get("chi0", 0))
+
+    def detector(self, run, size=(1030, 1614)):
+        """A `cristallina.rsm.Detector` for `run`, at its arm angle, from `[[geometry]]` and the run's first step.
+
+        Distance, direct-beam pixel and 2θ come from
+        [`geometry_from_step`][cristallina_scipp.angles.geometry_from_step]
+        with the catalogue's calibration for that run; `size` is the full
+        detector in pixels (columns, rows), the Jungfrau 1.5M by default.
+        """
+        from cristallina import rsm as crsm
+
+        from .angles import geometry_from_step
+        from .load import _open
+
+        with _open(self.scan(run), 0) as step:
+            g = geometry_from_step(step, **self.geometry(run))
+        det = crsm.Detector(R_m=g["distance"], px_size_um=g["pixel_size"] * 1e6, center_pixel=(g["x0"], g["y0"]),
+                            detector_size_px=tuple(size))
+        det.move_angles(gamma=g["two_theta"])
+        return det
+
+    def to_q(self, run, stack, reflection, toward=(0, 0, 1)):
+        """Add `h`, `k`, `l` and the local `strain`, `tilt_1`, `tilt_2` around `reflection` to a run's stack.
+
+        The sample is the one named by the `sample` label of the run's group
+        (see [`sample`][cristallina_scipp.catalogue.Catalogue.sample]); the
+        detector comes from [`detector`][cristallina_scipp.catalogue.Catalogue.detector];
+        the energy is the run's monochromator readback.
+        """
+        from .rsm import local_coords, pixel_hkl
+        from .series import run_metadata
+
+        names = {self.groups[g].get("sample") for g in self.groups if run in self.runs(g)} - {None}
+        if len(names) != 1:
+            raise ValueError(f"run {run}: its groups name {len(names)} samples; need exactly one `sample` label")
+        name = names.pop()
+        energy = run_metadata(self.scan(run))["mono_energy"].to(unit="eV").value
+        sample = self.sample(name)
+        hkl = pixel_hkl(stack, sample, self.detector(run), energy, offset=self.samples[name].get("offset", 0.0))
+        return local_coords(hkl, reflection, sample.sample_dict, toward=toward)
+
+    def split_series(self, groups, reflection=None, *, toward=(0, 0, 1), axis="x", bins=None, shape="voigt",
+                     detector=None, i0=None, **kwargs):
+        """[`split_series`][cristallina_scipp.series.split_series] over catalogue groups.
+
+        Without `reflection`, each run's detector projection along `axis` is
+        fitted. With `reflection` (e.g. `(2, 0, 0)`), each run is mapped to
+        strain and tilts around it with the catalogue's `[samples]` and
+        `[[geometry]]` (see [`to_q`][cristallina_scipp.catalogue.Catalogue.to_q])
+        and fitted in reciprocal space. `settings` record the catalogue, as for
+        [`series`][cristallina_scipp.catalogue.Catalogue.series], and the reflection.
+        """
+        from . import channels
+        from .series import split_series
+
+        groups, scans, rois, labels = self._collect(groups)
+        to_q = None if reflection is None else (lambda run, stack: self.to_q(run, stack, reflection, toward))
+        out = split_series(scans, detector or channels.JF, channels.JF_I0 if i0 is None else i0, roi=rois,
+                           labels=labels, axis=axis, to_q=to_q, bins=bins, shape=shape, **kwargs)
+        if reflection is not None:
+            out["settings"]["reflection"] = " ".join(str(i) for i in reflection)
+            out["settings"]["toward"] = " ".join(str(i) for i in toward)
+        return self._provenance(out, groups)
 
 
 def check(path, raw=True) -> tuple[list[str], list[str]]:
