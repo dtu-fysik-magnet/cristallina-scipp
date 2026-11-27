@@ -79,28 +79,34 @@ runs = "467-486"
 sample = "S1"
 ```
 
-A remounted or realigned sample gets a new entry.
+A remounted or realigned sample gets a new entry. The detector for each run comes from `[[geometry]]` and the run's
+motor positions ([`cat.detector(run)`][cristallina_scipp.catalogue.Catalogue.detector]), and
+[`cat.to_q(run, stack, reflection)`][cristallina_scipp.catalogue.Catalogue.to_q] adds h, k, l and the strain and
+tilts around a reflection to a reduced run.
 
 ### Field direction
 
-The vector magnet records the field's x, y and z components for every run. Give two sample directions in the
-magnet's frame, and every series of that sample's runs gets the field direction as coordinates, computed from the
-measured field instead of typed in:
+The vector magnet records the field's x, y and z components for every run, in its own frame. The sample sits fixed
+inside the magnet, and a rocking scan rotates the two together, so the field's direction relative to the crystal is
+set by those components alone. Say which field directions define the angle, and every series of that sample's runs
+gets it as coordinates, computed from the measured field instead of typed in:
 
 ```toml
 [samples."S1"]
 # ...
-field_axis = [0, 0, 1]     # the sample's c axis lies along the magnet's z
-field_toward = [0, 1, 0]   # and its b axis along y
+field_angle_zero = [0, 0, 1]   # magnet x, y, z: B along the magnet's z is 0 deg (here, along the sample's c)
+field_angle_90 = [0, 1, 0]     # B along the magnet's y is +90 deg (here, along the sample's b)
 ```
 
-`field_angle` is the angle of B from `field_axis`, towards `field_toward` (0° for B ∥ c, 90° for B ∥ b, signed),
-and `field_tilt` the angle of B out of that plane; both are NaN for fields below 0.01 T. Don't also give the groups
-a `field_angle` label: the measured one takes that name. For a series built without a catalogue, use
-[`add_field_angles`][cristallina_scipp.series.add_field_angles]. The detector for each run comes from `[[geometry]]` and the run's
-motor positions ([`cat.detector(run)`][cristallina_scipp.catalogue.Catalogue.detector]), and
-[`cat.to_q(run, stack, reflection)`][cristallina_scipp.catalogue.Catalogue.to_q] adds h, k, l and the strain and
-tilts around a reflection to a reduced run.
+Both are directions in the magnet's frame, not in the crystal's basis; which crystal axes they correspond to depends
+on how the sample was mounted, so note it in a comment. In the Cristallina-Q vector magnet's vertical-field mode
+(up to 5.2 T vertical plus up to 0.23 T horizontal in any direction), the horizontal component tilts the field away
+from vertical, and `field_angle` measures that tilt directly.
+
+`field_angle` is the angle of B from `field_angle_zero` towards `field_angle_90`, signed, and `field_tilt` the angle
+of B out of that plane; both are NaN for fields below 0.01 T. Don't also give the groups a `field_angle` label: the
+measured one takes that name. For a series built without a catalogue, use
+[`add_field_angles`][cristallina_scipp.series.add_field_angles].
 
 ## Share it during the experiment
 

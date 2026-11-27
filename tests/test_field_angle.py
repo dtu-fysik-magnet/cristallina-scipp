@@ -19,21 +19,21 @@ def series_with_fields(fields):
 def test_angles_in_and_out_of_the_plane():
     s = 2 / np.sqrt(2)
     out = cs.add_field_angles(series_with_fields([[0, 0, 2], [0, s, s], [0, 2, 0], [0, -2, 0], [2, 0, 0], [0, 0, 0]]),
-                              axis=(0, 0, 1), toward=(0, 1, 0))
+                              zero=(0, 0, 1), ninety=(0, 1, 0))
     angle, tilt = (out["summary"].coords[c].values for c in ("field_angle", "field_tilt"))
     assert np.allclose(angle[:4], [0, 45, 90, -90]) and np.allclose(tilt[:4], 0)
     assert np.isclose(abs(tilt[4]), 90)
     assert np.isnan(angle[5]) and np.isnan(tilt[5])  # no field, no direction
-    assert out["settings"]["field_axis"] == "0 0 1" and out["settings"]["field_toward"] == "0 1 0"
+    assert out["settings"]["field_angle_zero"] == "0 0 1" and out["settings"]["field_angle_90"] == "0 1 0"
 
 
 def test_toward_is_made_perpendicular_and_errors():
-    out = cs.add_field_angles(series_with_fields([[0, 1, 1]]), axis=(0, 0, 1), toward=(0, 1, 1))
+    out = cs.add_field_angles(series_with_fields([[0, 1, 1]]), zero=(0, 0, 1), ninety=(0, 1, 1))
     assert np.isclose(out["summary"].coords["field_angle"].values[0], 45)
     with pytest.raises(ValueError, match="parallel"):
-        cs.add_field_angles(series_with_fields([[0, 0, 1]]), axis=(0, 0, 1), toward=(0, 0, 2))
+        cs.add_field_angles(series_with_fields([[0, 0, 1]]), zero=(0, 0, 1), ninety=(0, 0, 2))
     with pytest.raises(ValueError, match="already has"):
-        cs.add_field_angles(out, axis=(0, 0, 1), toward=(0, 1, 0))
+        cs.add_field_angles(out, zero=(0, 0, 1), ninety=(0, 1, 0))
 
 
 ROTATION = """raw = "raw"
@@ -41,8 +41,8 @@ ROTATION = """raw = "raw"
 "peak" = { left = 0, right = 64, bottom = 22, top = 38 }
 [samples."S1"]
 lattice = { a = 0.5, b = 0.5, c = 0.7, alp = 90, bet = 90, gam = 90 }
-field_axis = [0, 0, 1]     # c along the magnet's z
-field_toward = [0, 1, 0]   # b along the magnet's y
+field_angle_zero = [0, 0, 1]   # magnet x, y, z: B along the magnet's z (here the sample's c) is 0 deg
+field_angle_90 = [0, 1, 0]     # B along the magnet's y (here the sample's b) is +90 deg
 [groups."rotation"]
 runs = "80-83"
 roi = "peak"
@@ -60,4 +60,4 @@ def test_catalogue_series_get_field_angles(tmp_path):
     assert np.allclose(s.coords["field_angle"].values, [0, 30, 60, 90], atol=1e-6)
     assert np.allclose(s.coords["field_tilt"].values, 0, atol=1e-6)
     assert np.allclose(s.coords["field"].values, 0.6)
-    assert out["settings"]["field_axis"] == "0 0 1"
+    assert out["settings"]["field_angle_zero"] == "0 0 1"

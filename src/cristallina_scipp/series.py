@@ -298,20 +298,24 @@ def split_series(scans, detector, i0=None, roi=None, *, labels=None, axis="x", t
                          "settings": settings})
 
 
-def add_field_angles(series, axis, toward, *, min_field=0.01) -> sc.DataGroup:
+def add_field_angles(series, zero, ninety, *, min_field=0.01) -> sc.DataGroup:
     """Field direction of every run, relative to the sample, from the measured field vector.
 
-    With â the sample `axis` and t̂ the direction `toward`, made perpendicular
-    to â (both in the vector magnet's x, y, z frame, e.g. `axis=(0, 0, 1)` if
-    the sample's c axis lies along the magnet's z):
+    `zero` and `ninety` are directions in the vector magnet's own x, y, z
+    frame (the frame of the `field_x`, `field_y`, `field_z` readbacks), not
+    in the crystal's basis: the field direction at which the angle is 0°, and
+    one at which it is +90°. If the sample's c axis lies along the magnet's z
+    and its b axis along y, `zero=(0, 0, 1)` and `ninety=(0, 1, 0)` give the
+    angle of B from c towards b. The sample sits fixed in the magnet, which
+    rotates with it in a rocking scan, so these do not change during a run.
 
-    - `field_angle` (deg) = atan2(B·t̂, B·â): 0 for B along â, 90 for B along
-      t̂, signed, in the plane of â and t̂ (the plane a field rotation from
-      B ∥ c to B ∥ b sweeps, with â = c and t̂ = b);
+    With ẑ = `zero` and n̂ = `ninety` made perpendicular to it:
+
+    - `field_angle` (deg) = atan2(B·n̂, B·ẑ), signed, in the plane of ẑ and n̂;
     - `field_tilt` (deg): the angle of B out of that plane.
 
     Both are NaN where |B| < `min_field` (T), where the direction means
-    nothing. `axis` and `toward` may also be one vector per run, shape
+    nothing. `zero` and `ninety` may also be one vector per run, shape
     `(runs, 3)`, for series that combine samples mounted differently.
 
     Returns:
@@ -323,13 +327,13 @@ def add_field_angles(series, axis, toward, *, min_field=0.01) -> sc.DataGroup:
         raise ValueError("the series already has a field_angle coordinate (a catalogue label?); rename the label, "
                          "e.g. to nominal_field_angle")
     b = np.stack([summary.coords[f"field_{c}"].to(unit="T").values for c in "xyz"], axis=-1)
-    a = np.broadcast_to(np.asarray(axis, dtype=float), b.shape)
-    t = np.broadcast_to(np.asarray(toward, dtype=float), b.shape)
+    a = np.broadcast_to(np.asarray(zero, dtype=float), b.shape)
+    t = np.broadcast_to(np.asarray(ninety, dtype=float), b.shape)
     a = a / np.linalg.norm(a, axis=-1, keepdims=True)
     t = t - np.sum(t * a, axis=-1, keepdims=True) * a
     norm = np.linalg.norm(t, axis=-1, keepdims=True)
     if np.any(norm < 1e-9):
-        raise ValueError("toward is parallel to axis")
+        raise ValueError("ninety is parallel to zero")
     t = t / norm
     n = np.cross(a, t)
     ba, bt, bn = (np.sum(b * v, axis=-1) for v in (a, t, n))
@@ -341,5 +345,5 @@ def add_field_angles(series, axis, toward, *, min_field=0.01) -> sc.DataGroup:
                                                unit="deg")
     out["settings"] = series["settings"].copy()
     fmt = lambda v: "; ".join(" ".join(f"{x:g}" for x in row) for row in np.unique(np.atleast_2d(v), axis=0))  # noqa: E731
-    out["settings"]["field_axis"], out["settings"]["field_toward"] = fmt(axis), fmt(toward)
+    out["settings"]["field_angle_zero"], out["settings"]["field_angle_90"] = fmt(zero), fmt(ninety)
     return out

@@ -283,13 +283,16 @@ class Catalogue:
         names = [{self.groups[g].get("sample") for g in self.groups if run in self.runs(g)} - {None} for run in runs]
         names = [n.pop() if len(n) == 1 else None for n in names]
         specs = [self.samples.get(n, {}) for n in names]
-        given = ["field_axis" in s for s in specs]
+        given = ["field_angle_zero" in s for s in specs]
         if not any(given):
             return out
         if not all(given):
             missing = sorted({str(n) for n, g in zip(names, given) if not g})
-            raise ValueError(f"samples {missing} give no field_axis, but others in this series do")
-        return add_field_angles(out, [s["field_axis"] for s in specs], [s.get("field_toward", [1, 0, 0]) for s in specs])
+            raise ValueError(f"samples {missing} give no field_angle_zero, but others in this series do")
+        missing = sorted({str(n) for n, s in zip(names, specs) if "field_angle_90" not in s})
+        if missing:
+            raise ValueError(f"samples {missing} give field_angle_zero but no field_angle_90")
+        return add_field_angles(out, [s["field_angle_zero"] for s in specs], [s["field_angle_90"] for s in specs])
 
     def sample(self, name):
         """A `cristallina.rsm.Sample` from `[samples."name"]` (needs the `[rsm]` extra).
@@ -298,9 +301,10 @@ class Catalogue:
         bet, gam}`, nm and degrees), `surface_normal` (default `[0, 0, 1]`) and
         the mounting offsets `alpha0`, `ov0`, `chi0` (degrees), plus `offset`,
         added to the rocking readback to give `alpha`. A remounted sample is a
-        new entry. Optional `field_axis` and `field_toward` give two sample
-        directions in the magnet's x, y, z frame; series of the sample's runs
-        then get `field_angle` and `field_tilt` coordinates (see
+        new entry. Optional `field_angle_zero` and `field_angle_90` are the
+        field directions, in the magnet's own x, y, z frame, at which the
+        field angle is 0° and +90°; series of the sample's runs then get
+        `field_angle` and `field_tilt` coordinates (see
         [`add_field_angles`][cristallina_scipp.series.add_field_angles]).
         """
         import numpy as np
