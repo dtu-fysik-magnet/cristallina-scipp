@@ -182,10 +182,11 @@ def resonance(energy_ev):
     return 1 + 4 / (1 + ((np.asarray(energy_ev) - EDGE_EV) / 2.5) ** 2)
 
 
-def rocking_scan(base, run=55, seed=3, field=1.5, shift_per_tesla=0.0, energy=7511.0, scale=1.0, attenuators=None):
+def rocking_scan(base, run=55, seed=3, field=1.5, shift_per_tesla=0.0, energy=7511.0, scale=1.0, attenuators=None,
+                 field_direction=(0, 0, 1)):
     """Rocking curve through a Bragg peak; the spot drifts along x by 40 px/deg.
 
-    `field` (T, along z) is written to the magnet PVs; `shift_per_tesla`
+    `field` (T, along `field_direction` in the magnet's x, y, z) is written to the magnet PVs; `shift_per_tesla`
     (deg/T) moves the peak with it, for multi-run examples. `energy` (eV) is
     written to the energy PVs and `scale` multiplies the peak (not the
     background), e.g. `scale=resonance(energy)` for an energy series.
@@ -205,7 +206,9 @@ def rocking_scan(base, run=55, seed=3, field=1.5, shift_per_tesla=0.0, energy=75
         peak = 0.6 * scale * rocking_curve(t - center + BRAGG["center"]) * spot + 5e-4
         steps.append(_step(rng, i, np.full(SHAPE, 1e-4), peak, e / 1000, e / 1000, attenuators=attenuators))
     att = dict(zip(ATTENUATORS, attenuators)) if attenuators else {}
-    pvs = [_pvs(e, **{"SARES31-GPS:ROTTHETA": t, "SARES31-MAG-IPS1-Z:SIG_FLD": field, **att}) for t in thetas]
+    u = np.asarray(field_direction, dtype=float) / np.linalg.norm(field_direction)
+    magnet = {f"SARES31-MAG-IPS1-{c}:SIG_FLD": field * v for c, v in zip("XYZ", u)}
+    pvs = [_pvs(e, **{"SARES31-GPS:ROTTHETA": t, **magnet, **att}) for t in thetas]
     return write_scan(Path(base) / f"run{run:04}", thetas, steps, name="SARES31-GPS:ROTTHETA", units="deg", pvs=pvs)
 
 

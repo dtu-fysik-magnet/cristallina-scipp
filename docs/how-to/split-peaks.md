@@ -6,9 +6,23 @@ scattering plane, at different ν. How large either is depends on the sample, te
 for every run is the same: one peak, or two, and how far apart?
 
 [`fit_split`][cristallina_scipp.split.fit_split] answers it by fitting one peak and two peaks to the same data and
-comparing them with the Bayesian information criterion. `delta_bic` above 10 is very strong evidence for two peaks;
-near or below zero, the data do not need a second one, whatever the two-peak fit returns. The fits maximise the
-Poisson likelihood of the photon counts, so reduce with `photon_energy`.
+comparing them. The fits maximise the Poisson likelihood of the photon counts, so reduce with `photon_energy`.
+
+!!! info "The Bayesian information criterion"
+    A two-peak model always fits at least as well as a one-peak model: it has more parameters. The Bayesian
+    information criterion (BIC) weighs the better fit against the extra parameters:
+
+    BIC = −2 ln L + k ln n
+
+    where L is the maximised likelihood of the model, k its number of free parameters and n the number of data
+    points. The first term falls as the fit improves; the second grows with every parameter. The model with the lower
+    BIC is preferred.
+
+    `delta_bic` is the difference BIC(one peak) − BIC(two peaks), so positive values favour two peaks. On the usual
+    scale (Kass and Raftery, 1995), a difference of 2–6 is positive evidence, 6–10 strong and above 10 very strong;
+    `split` is True above 10. Near or below zero, the data do not need a second peak, whatever the two-peak fit
+    returns. If the data scatter more than counting statistics allow (`dispersion` above 1), the likelihood
+    difference is scaled down by that factor, so the extra scatter cannot fake evidence.
 
 ## On the detector
 

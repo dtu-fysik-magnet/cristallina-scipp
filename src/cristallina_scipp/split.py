@@ -190,13 +190,19 @@ def fit_split(da, coords=None, shape="voigt", coupling=True, exposure=None) -> s
     squares does not). Counts and their scale come from the data's values and
     variances, so reduce with `photon_energy`; normalising by I0 is fine.
 
-    The comparison is the Bayesian information criterion: `delta_bic` =
-    BIC(one) − BIC(two), with the likelihood ratio divided by the two-peak
-    fit's `dispersion` (deviance per degree of freedom) when that exceeds 1,
-    so scatter beyond Poisson does not fake evidence; standard errors are
-    inflated by its square root. Values above `SPLIT_EVIDENCE` (10) are very
-    strong evidence for two peaks; near or below zero the data do not need a
-    second peak, whatever the two-peak fit returns.
+    The comparison uses the Bayesian information criterion (BIC) of each
+    model, BIC = −2 ln L + k ln n, where L is the maximised likelihood, k the
+    number of free parameters and n the number of data points. The first
+    term rewards a better fit, the second penalises every extra parameter, so
+    a lower BIC is the better model once its complexity is paid for.
+    `delta_bic` = BIC(one peak) − BIC(two peaks): positive values favour two
+    peaks. Differences of 2-6 are positive, 6-10 strong and above 10 very
+    strong evidence (Kass and Raftery, 1995); `split` is True above
+    `SPLIT_EVIDENCE` (10). Near or below zero the data do not need a second
+    peak, whatever the two-peak fit returns. The likelihood ratio is divided
+    by the two-peak fit's `dispersion` (deviance per degree of freedom) when
+    that exceeds 1, so scatter beyond Poisson does not fake evidence; standard
+    errors are inflated by its square root.
 
     The standard errors of the two-peak parameters mean something only when
     `split` is True: two peaks closer than about twice their width look like

@@ -247,7 +247,7 @@ class Catalogue:
         groups, scans, rois, labels = self._collect(groups)
         out = run_series(scans, detector or channels.JF, channels.JF_I0 if i0 is None else i0,
                          roi=rois, labels=labels, **kwargs)
-        return self._provenance(out, groups)
+        return self._field_angles(self._provenance(out, groups))
 
     def _collect(self, groups):
         groups = [groups] if isinstance(groups, str) else list(groups)
@@ -268,6 +268,32 @@ class Catalogue:
         out["settings"]["groups"] = ", ".join(groups)
         return out
 
+    def sample_of(self, run):
+        """The `sample` label of the group(s) listing `run`; an error unless there is exactly one."""
+        names = {self.groups[g].get("sample") for g in self.groups if run in self.runs(g)} - {None}
+        if len(names) != 1:
+            raise ValueError(f"run {run}: its groups name {len(names)} samples; need exactly one `sample` label")
+        return names.pop()
+
+    def _field_angles(self, out):
+        """Add field_angle and field_tilt when the series' samples give their field axes."""
+        from .series import add_field_angles
+
+        runs = out["summary"].coords["run"].values
+        names = [{self.groups[g].get("sample") for g in self.groups if run in self.runs(g)} - {None} for run in runs]
+        names = [n.pop() if len(n) == 1 else None for n in names]
+        specs = [self.samples.get(n, {}) for n in names]
+        given = ["field_angle_zero" in s for s in specs]
+        if not any(given):
+            return out
+        if not all(given):
+            missing = sorted({str(n) for n, g in zip(names, given) if not g})
+            raise ValueError(f"samples {missing} give no field_angle_zero, but others in this series do")
+        missing = sorted({str(n) for n, s in zip(names, specs) if "field_angle_90" not in s})
+        if missing:
+            raise ValueError(f"samples {missing} give field_angle_zero but no field_angle_90")
+        return add_field_angles(out, [s["field_angle_zero"] for s in specs], [s["field_angle_90"] for s in specs])
+
     def sample(self, name):
         """A `cristallina.rsm.Sample` from `[samples."name"]` (needs the `[rsm]` extra).
 
@@ -275,7 +301,11 @@ class Catalogue:
         bet, gam}`, nm and degrees), `surface_normal` (default `[0, 0, 1]`) and
         the mounting offsets `alpha0`, `ov0`, `chi0` (degrees), plus `offset`,
         added to the rocking readback to give `alpha`. A remounted sample is a
-        new entry.
+        new entry. Optional `field_angle_zero` and `field_angle_90` are the
+        field directions, in the magnet's own x, y, z frame, at which the
+        field angle is 0° and +90°; series of the sample's runs then get
+        `field_angle` and `field_tilt` coordinates (see
+        [`add_field_angles`][cristallina_scipp.series.add_field_angles]).
         """
         import numpy as np
         from cristallina import rsm as crsm
@@ -317,10 +347,7 @@ class Catalogue:
         from .rsm import local_coords, pixel_hkl
         from .series import run_metadata
 
-        names = {self.groups[g].get("sample") for g in self.groups if run in self.runs(g)} - {None}
-        if len(names) != 1:
-            raise ValueError(f"run {run}: its groups name {len(names)} samples; need exactly one `sample` label")
-        name = names.pop()
+        name = self.sample_of(run)
         energy = run_metadata(self.scan(run))["mono_energy"].to(unit="eV").value
         sample = self.sample(name)
         hkl = pixel_hkl(stack, sample, self.detector(run), energy, offset=self.samples[name].get("offset", 0.0))
@@ -347,7 +374,7 @@ class Catalogue:
         if reflection is not None:
             out["settings"]["reflection"] = " ".join(str(i) for i in reflection)
             out["settings"]["toward"] = " ".join(str(i) for i in toward)
-        return self._provenance(out, groups)
+        return self._field_angles(self._provenance(out, groups))
 
 
 def check(path, raw=True) -> tuple[list[str], list[str]]:
