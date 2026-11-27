@@ -60,3 +60,41 @@ energy, field and transmission, and the group(s) it belongs to. Runs with an emp
 describe; `status` flags runs still being written and runs a group lists that are not in `raw`. The
 [experiment template](https://github.com/dtu-fysik-magnet/cristallina-scipp/blob/main/notebooks/experiment_template.ipynb)
 starts with this table.
+
+## Share it during the experiment
+
+Several people edit the catalogue during a beamtime, often at once. A plain shared file loses edits (the last save
+wins) and can be left broken by a typo. Keep it in git instead, with a check that refuses a broken version:
+
+```sh
+cristallina-catalogue setup /sf/cristallina/data/p2xxxx/work --from my_catalogue.toml
+```
+
+This creates two things in the work folder:
+
+- `catalogue.git`, a repository the whole group can push to. A push whose catalogue does not load (invalid TOML,
+  an undefined ROI, a run range in two `[[geometry]]` entries, a name defined twice) is refused, with the reason.
+- `catalogue/`, a read-only checkout that is updated after every accepted push. Notebooks load this folder, and
+  every saved series records its git commit as `catalogue_commit` (with `+modified` if it was changed by hand).
+
+To change it, work in your own clone:
+
+```sh
+git clone /sf/cristallina/data/p2xxxx/work/catalogue.git ~/catalogue
+cd ~/catalogue
+# edit, then check before pushing
+cristallina-catalogue check .
+git commit -am "Add the 30 degree field series"
+git pull --rebase && git push
+```
+
+If someone else pushed first, `git pull --rebase` merges their change with yours; edits to different groups merge
+without conflicts. `check` also warns about runs listed in two groups and runs that are not in the raw folder (yet).
+
+To find the catalogue a saved series was made with: `git show <catalogue_commit>:<file>` in any clone.
+
+### Split it into files
+
+A catalogue can be a folder of TOML files, read as one: for example `00-setup.toml` with `raw`, the ROIs and the
+geometry, and one file per series or per person. People then rarely edit the same file. A name defined in two files
+is an error, as is a `raw` that differs between files.
