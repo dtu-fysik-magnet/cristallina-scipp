@@ -181,11 +181,21 @@ def run_series(scans, detector, i0=None, roi=None, *, labels=None, n_edge=3, sha
                          "centroid": mom["centroid"], "moment_fwhm": mom["fwhm"]})
         meta.append(run_metadata(scans[run]))
         curves[str(run)] = curve
-        y, x = stack.coords["y"].values, stack.coords["x"].values
-        where.append({"roi": getattr(r, "name", None) or "", "roi_bottom": int(y[0]), "roi_top": int(y[-1]) + 1,
-                      "roi_left": int(x[0]), "roi_right": int(x[-1]) + 1,
-                      "scan": str(getattr(scans[run], "fname", ""))})
+        where.append(_where(r, stack, scans[run]))
+    summary = _summary(runs, measures, meta, labels, where)
+    settings = _settings(detector=detector, i0=i0, i0_unit=i0_unit, n_edge=n_edge, shape=shape, **reduce_kwargs)
+    return sc.DataGroup({"summary": summary, "curves": sc.DataGroup(curves), "settings": settings})
 
+
+def _where(roi, stack, scan):
+    """Provenance of one run's point: the ROI name and pixel bounds summed, and the scan file."""
+    y, x = stack.coords["y"].values, stack.coords["x"].values
+    return {"roi": getattr(roi, "name", None) or "", "roi_bottom": int(y[0]), "roi_top": int(y[-1]) + 1,
+            "roi_left": int(x[0]), "roi_right": int(x[-1]) + 1, "scan": str(getattr(scan, "fname", ""))}
+
+
+def _summary(runs, measures, meta, labels, where):
+    """A Dataset along `run` from per-run measures, with metadata, shared labels and provenance as coordinates."""
     coords = {"run": sc.array(dims=["run"], values=runs, unit=None)}
     for name in meta[0]:
         coords[name] = sc.concat([m[name] for m in meta], "run")
@@ -194,14 +204,15 @@ def run_series(scans, detector, i0=None, roi=None, *, labels=None, n_edge=3, sha
         coords[name] = sc.array(dims=["run"], values=[labels[run][name] for run in runs], unit=None)
     for name in where[0]:
         coords[name] = sc.array(dims=["run"], values=[w[name] for w in where], unit=None)
-    summary = sc.Dataset(
-        {name: sc.concat([m[name] for m in measures], "run") for name in measures[0]}, coords=coords
-    )
-    settings = {"detector": detector, "i0": i0, "i0_unit": i0_unit, "n_edge": n_edge, "shape": shape, **reduce_kwargs}
+    return sc.Dataset({name: sc.concat([m[name] for m in measures], "run") for name in measures[0]}, coords=coords)
+
+
+def _settings(**settings):
+    """Arguments as storable values (None as "none", keV arguments with their unit), plus version and time."""
     settings = {k: "none" if v is None else (str(v) if isinstance(v, sc.Unit) else v) for k, v in settings.items()}
     settings |= {k: sc.scalar(float(v), unit="keV") for k, v in settings.items() if k in _KEV and v != "none"}
     settings |= {"cristallina_scipp": _version(), "created": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    return sc.DataGroup({"summary": summary, "curves": sc.DataGroup(curves), "settings": sc.DataGroup(settings)})
+    return sc.DataGroup(settings)
 
 
 _KEV = {"cutoff", "upper_cutoff", "i0_cutoff", "photon_energy"}  # reduce_scan arguments in keV
@@ -212,3 +223,75 @@ def _version():
         return version("cristallina-scipp")
     except PackageNotFoundError:
         return "unknown"
+
+
+def split_series(scans, detector, i0=None, roi=None, *, labels=None, axis="x", to_q=None, bins=None,
+                 shape="voigt", **reduce_kwargs) -> sc.DataGroup:
+    """One point per run: is the reflection split, and by how much?
+
+    For every run, [`fit_split`][cristallina_scipp.split.fit_split] compares
+    one peak with two, either on the detector or in reciprocal space:
+
+    - Detector (default): the ROI image normalised by I0 and summed over the
+      other detector axis, `(step, x)` for splitting in 2θ (`axis="x"`) or
+      `(step, y)` for tilts out of the scattering plane (`axis="y"`).
+    - Reciprocal space: `to_q(run, stack)` adds `strain`, `tilt_1` and
+      `tilt_2` coordinates (see
+      [`Catalogue.split_series`][cristallina_scipp.catalogue.Catalogue.split_series],
+      which builds it from the catalogue), and the
+      [`histogram`][cristallina_scipp.rsm.histogram] in those, with `bins`,
+      is fitted.
+
+    Args:
+        scans, detector, i0, roi, labels, **reduce_kwargs: As for
+            [`run_series`][cristallina_scipp.series.run_series];
+            `photon_energy` is required, since the fits use photon counts.
+        axis: Detector axis kept with the scan axis, `"x"` or `"y"`.
+        to_q: For reciprocal space, as above.
+        bins: Bins for the reciprocal-space histogram; 24 per axis by default.
+        shape: Peak shape, `"voigt"`, `"lorentzian"` or `"gaussian"`.
+
+    Returns:
+        A DataGroup with `summary`, a Dataset along `run` with `delta_bic`,
+            `split`, `dispersion`, the domain fraction `ratio`, and per axis
+            the two-peak `separation_<axis>` and `fwhm_<axis>` and the
+            one-peak `center_<axis>`, with the run metadata, labels and
+            provenance as coordinates (as `run_series`); `maps`, the data
+            fitted for each run; `best_fit`, the two-peak model of each run;
+            and `settings`. Separations mean something only where `split`.
+    """
+    from .rsm import histogram
+    from .split import fit_split
+
+    if reduce_kwargs.get("photon_energy") is None:
+        raise ValueError("split_series needs photon_energy: the fits use photon counts")
+    runs = list(scans)
+    labels = labels or {}
+    measures, meta, where, maps, best = [], [], [], {}, {}
+    for run in runs:
+        r = roi.get(run) if isinstance(roi, dict) else roi
+        stack = reduce_scan(scans[run], detector, i0, roi=r, **reduce_kwargs)
+        if to_q is not None:
+            if "i0" not in stack.coords:
+                stack.coords["i0"] = sc.ones(dims=["step"], shape=[stack.sizes["step"]])
+            data = histogram(to_q(run, stack), **(bins or {"strain": 24, "tilt_1": 24, "tilt_2": 24}))
+            fit = fit_split(data, exposure="exposure", coupling=False, shape=shape)
+        else:
+            norm = stack if i0 is None else stack / (stack.coords["i0"] / sc.scalar(1.0, unit=stack.coords["i0"].unit))
+            data = norm.sum({"x": "y", "y": "x"}[axis])
+            fit = fit_split(data, coords={"step": "readback"}, shape=shape)
+        two, one = fit["two"], fit["one"]
+        m = {"delta_bic": sc.scalar(float(fit["delta_bic"])), "split": sc.scalar(fit["split"]),
+             "dispersion": sc.scalar(float(two["dispersion"])), "ratio": two["ratio"]}
+        for name in two["separation"]:
+            m |= {f"separation_{name}": two["separation"][name], f"fwhm_{name}": two["fwhm"][name],
+                  f"center_{name}": one["center"][name]}
+        measures.append(m)
+        meta.append(run_metadata(scans[run]))
+        where.append(_where(r, stack, scans[run]))
+        maps[str(run)], best[str(run)] = data, two["best_fit"]
+    summary = _summary(runs, measures, meta, labels, where)
+    settings = _settings(detector=detector, i0=i0, shape=shape, space="reciprocal" if to_q else f"detector {axis}",
+                         **reduce_kwargs)
+    return sc.DataGroup({"summary": summary, "maps": sc.DataGroup(maps), "best_fit": sc.DataGroup(best),
+                         "settings": settings})

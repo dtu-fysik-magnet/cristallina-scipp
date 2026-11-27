@@ -86,3 +86,29 @@ assert not fits["rocking curve (step)"]["split"] and fits["2theta map (step, x)"
 assert not fits["tilt map (step, y)"]["split"]
 assert abs(sep.value - 6.0) < 3 * np.sqrt(sep.variance)
 assert fit["split"] and abs(two["separation"]["strain"].value - 0.006) < 3 * np.sqrt(two["separation"]["strain"].variance)
+
+# --8<-- [start:series]
+# a catalogue with [samples] and [[geometry]], and runs whose (2 0 0) splits more with field
+cat = cs.Catalogue.load(testing.split_peak_experiment(base / "field", fields=(0.0, 1.5, 3.0)))
+series = cat.split_series("split vs field", reflection=(2, 0, 0), toward=(0, 0, 1),
+                          bins={"strain": 16, "tilt_1": 16, "tilt_2": 16},
+                          cutoff=7.0, i0_cutoff=2.5, photon_energy=7.511)
+s = series["summary"]
+print(sc.Dataset({k: s[k] for k in ("delta_bic", "split", "separation_strain", "separation_tilt_1")})
+      .drop_coords([c for c in s.coords if c not in ("run", "field")]))
+# --8<-- [end:series]
+text("split_series", sc.Dataset({k: s[k] for k in ("delta_bic", "split", "separation_strain", "separation_tilt_1")})
+     .drop_coords([c for c in s.coords if c not in ("run", "field")]))
+
+fig, axs = plt.subplots(1, 2, figsize=(9, 3.4), layout="constrained")
+b = s.coords["field"].values
+for ax, name, scale, label in ((axs[0], "separation_strain", 100, "strain separation [%]"),
+                               (axs[1], "separation_tilt_1", 1, "tilt₁ separation [deg]")):
+    ok = s["split"].values
+    ax.errorbar(b[ok], s[name].values[ok] * scale, yerr=np.sqrt(s[name].variances[ok]) * scale, fmt="o", label="split")
+    ax.plot(b[~ok], np.zeros((~ok).sum()), "x", color="gray", label="one peak")
+    ax.plot(b, b * {"separation_strain": 0.001, "separation_tilt_1": 0.05}[name] * scale, "k:", label="true")
+    ax.set(xlabel="field [T]", ylabel=label)
+axs[0].legend()
+save(fig, "split_series")
+assert list(s["split"].values) == [False, True, True]

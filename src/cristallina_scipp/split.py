@@ -37,6 +37,7 @@ import scipp as sc
 from scipy.special import voigt_profile, xlogy
 
 _FWHM_PER_SIGMA = 2 * np.sqrt(2 * np.log(2))
+EXPLORE = 30  # evaluations per parameter for each exploratory start; 10 missed a 4-sigma split in tests
 SPLIT_EVIDENCE = 10.0  # BIC difference above which two peaks are preferred ("very strong" on the Kass-Raftery scale)
 
 
@@ -97,7 +98,7 @@ def _params(model, start):
             else:
                 params[f"{w}{k}"].set(min=1e-6 * span)  # a Voigt with both widths 0 is undefined
         if model.n == 2:
-            params[f"s{k}"].set(min=0 if k == 0 else -span, max=span)  # s0 >= 0 labels the peaks
+            params[f"s{k}"].set(min=-span, max=span)  # the peaks are labelled after the fit
     params["amp"].set(min=0)
     if model.n == 2:
         params["ratio"].set(min=0, max=1)
@@ -300,14 +301,14 @@ def _compare(points, counts, scale, shape, coupling):
     fwhm = [_fwhm(p1[f"sig{k}"], p1[f"gam{k}"]) for k in range(ndim)]
     # every start on a grid of separations (in units of the one-peak FWHM) runs briefly; the two
     # best are then converged, which finds the same optimum as converging all at a fraction of the cost
-    grid = [(0.0, 0.6)] + [(-0.6, 0.0, 0.6)] * (ndim - 1)
+    grid = [(0.0, 0.6)] + [(-0.6, 0.0, 0.6)] * (ndim - 1)  # first axis >= 0: the other sign is the same model
     trials = []
     for steps in itertools.product(*grid):
         if not any(steps):
             continue
         seed = dict(p1) | {f"s{k}": steps[k] * fwhm[k] for k in range(ndim)} | {"ratio": 0.5}
         seed |= {f"{w}{k}": 0.7 * p1[f"{w}{k}"] for k in range(ndim) for w in ("sig", "gam")}
-        trials.append(_fit(two, counts, scale, seed, max_nfev=30 * (len(seed) + 1)))
+        trials.append(_fit(two, counts, scale, seed, max_nfev=EXPLORE * (len(seed) + 1)))
     trials.sort(key=lambda r: r.deviance)
     best = min((_fit(two, counts, scale, r.params) for r in trials[:2]), key=lambda r: r.deviance)
 
