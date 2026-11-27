@@ -280,3 +280,32 @@ def example_experiment(base):
 def march_2026(base):
     """Write all three synthetic March runs under `base`; returns `{run: scan.json}`."""
     return {45: fluorescence_energy_scan(base), 51: translation_scan(base), 55: rocking_scan(base)}
+
+
+def split_rocking_scan(base, run=56, seed=4, d_omega=0.0, d_x=0.0, d_y=0.0, ratio=0.5, fwhm=BRAGG["fwhm"],
+                       sigma_px=BRAGG["sigma_px"], drift=0.0, scale=1.0):
+    """Rocking curve of a reflection split into two domains, with known splitting.
+
+    The two peaks sit at ω = center ∓ `d_omega`/2 (deg), detector column
+    x ∓ `d_x`/2 and row y ∓ `d_y`/2 (pixels), with intensity fractions `ratio`
+    and 1 − `ratio`. Each is a Lorentzian of `fwhm` (deg) in ω times a
+    Gaussian spot of `sigma_px`; `drift` (px/deg) moves the spots along x
+    with ω. A tetragonal-to-orthorhombic distortion gives both: different
+    d-spacings (`d_x`, through 2θ) and tilted twin domains (`d_omega`, `d_y`).
+    """
+    rng = np.random.default_rng(seed)
+    thetas = np.arange(-18.5, -17.49, 0.025)
+    yy, xx = np.mgrid[: SHAPE[0], : SHAPE[1]]
+    domains = [(-0.5, ratio), (0.5, 1 - ratio)]
+    steps = []
+    for i, t in enumerate(thetas):
+        peak = np.full(SHAPE, 5e-4)
+        for sign, fraction in domains:
+            c = BRAGG["center"] + sign * d_omega
+            x0, y0 = BRAGG["x"] + sign * d_x + drift * (t - c), BRAGG["y"] + sign * d_y
+            rock = (fwhm / 2) ** 2 / ((t - c) ** 2 + (fwhm / 2) ** 2)
+            spot = np.exp(-0.5 * ((xx - x0) ** 2 + (yy - y0) ** 2) / sigma_px**2)
+            peak += 1.2 * scale * fraction * rock * spot
+        steps.append(_step(rng, i, np.full(SHAPE, 1e-4), peak, 7.511, 7.511))
+    pvs = [_pvs(7511.0, **{"SARES31-GPS:ROTTHETA": t}) for t in thetas]
+    return write_scan(Path(base) / f"run{run:04}", thetas, steps, name="SARES31-GPS:ROTTHETA", units="deg", pvs=pvs)

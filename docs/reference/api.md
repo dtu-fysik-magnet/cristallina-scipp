@@ -31,6 +31,12 @@
     options:
       show_root_heading: false
 
+## Split peaks
+
+::: cristallina_scipp.split
+    options:
+      show_root_heading: false
+
 ## Angles
 
 ::: cristallina_scipp.angles

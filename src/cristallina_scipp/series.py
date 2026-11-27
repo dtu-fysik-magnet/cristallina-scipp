@@ -152,7 +152,7 @@ def run_series(scans, detector, i0=None, roi=None, *, labels=None, n_edge=3, sha
             from a [`Catalogue`][cristallina_scipp.catalogue.Catalogue]. Names
             given for every run become coordinates.
         n_edge: Points at each end used for the integral's background.
-        shape: Peak shape for the fit, `"lorentzian"` or `"gaussian"`.
+        shape: Peak shape for the fit, `"lorentzian"`, `"gaussian"` or `"voigt"`.
 
     Returns:
         A DataGroup with `summary`, a Dataset along `run` (coordinates: `run`,
