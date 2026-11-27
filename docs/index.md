@@ -39,7 +39,8 @@ curve = cs.roi_intensities(stack, [peak_roi])["roi", 0] / stack.coords["i0"]
 
 - **Tutorials** walk through complete analyses on synthetic scans that imitate the March 2026 runs. Start with the
   [fluorescence energy scan](tutorials/fluorescence-scan.md).
-- **How-to guides** cover single tasks: [finding the sample](how-to/sample-search.md), [describing the experiment in a run catalogue](how-to/catalogue.md), and
+- **How-to guides** cover single tasks: [checking the beam and the photon energy](how-to/beam-checks.md),
+  [finding the sample](how-to/sample-search.md), [describing the experiment in a run catalogue](how-to/catalogue.md), and
   [translating existing cristallina code](how-to/from-cristallina.md).
 - **Reference**: the [API](reference/api.md), generated from the docstrings.
 

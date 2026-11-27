@@ -14,6 +14,7 @@ nav = [
   ]},
   {"How-to" = [
     {"Install" = "how-to/install.md"},
+    {"Check the beam and the photon energy" = "how-to/beam-checks.md"},
     {"Find the sample" = "how-to/sample-search.md"},
     {"Describe the experiment" = "how-to/catalogue.md"},
     {"Correct for transmission and absorption" = "how-to/corrections.md"},
