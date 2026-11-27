@@ -1,6 +1,7 @@
 [project]
 site_name = "cristallina-scipp"
 site_description = "scipp views of SwissFEL/Cristallina data"
+site_url = "https://dtu-fysik-magnet.github.io/cristallina-scipp/"
 docs_dir = "docs"
 site_dir = "site"
 nav = [

@@ -1,0 +1,41 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]  # bitshuffle has no wheels beyond cp312
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked --python ${{ matrix.python }} --all-extras
+
+      # tests/test_cristallina_scipp.py compares against cristallina's own test run,
+      # expected in a checkout next to this repository (~260 MB). Cached by the
+      # commit uv.lock pins.
+      - name: cristallina commit
+        id: cr
+        run: echo "sha=$(grep -o 'cristallina_analysis_package.git#[0-9a-f]*' uv.lock | head -1 | cut -d'#' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: cr-cache
+        with:
+          path: ../cristallina_analysis_package/tests/data
+          key: cristallina-data-${{ steps.cr.outputs.sha }}
+      - if: steps.cr-cache.outputs.cache-hit != 'true'
+        run: |
+          git init -q ../cristallina_analysis_package
+          cd ../cristallina_analysis_package
+          git fetch -q --depth 1 https://gitea.psi.ch/Cristallina/cristallina_analysis_package.git ${{ steps.cr.outputs.sha }}
+          git checkout -q FETCH_HEAD
+
+      - run: uv run --no-sync pytest -ra
