@@ -17,6 +17,9 @@ The first release. Everything below is new.
   photon counts with Poisson variances), `scan_means`, `roi_intensities`, `crop`, `to_photons`, `channel`, `step`.
 - Peaks: `peaks.fit_peaks` (Lorentzian, Gaussian or exact Voigt), `peaks.moments`, `peaks.integrate` (area above a
   straight-line background, variances propagated, no clipping).
+- Beam checks: `pixel_energies` histograms the energies of the pixels hit in one or several steps, for choosing the
+  fluorescence and Bragg windows (replaces cristallina's `calculate_image_histograms`); a how-to covers beam monitors,
+  dropped pulses, photon-energy offsets and the fluorescence window.
 - Run catalogue (`Catalogue`): one TOML file, or a folder of them, per experiment with run groups, ROIs, detector
   calibration by run range and samples; strict loading that names the file at fault.
 - `cristallina-catalogue` command: `check` a catalogue, and `setup` a shared git repository with hooks that refuse a
@@ -26,6 +29,9 @@ The first release. Everything below is new.
 - Run series: `run_series` and `Catalogue.series`, one point per run (integral, fit, moments) with energy, field,
   transmission and labels as coordinates, saved to HDF5 with provenance (settings, package version, catalogue path,
   SHA-256 and git commit).
+- Field direction: `add_field_angles` computes `field_angle` and `field_tilt` from each run's measured field vector;
+  a catalogue sample's `field_angle_zero` and `field_angle_90` (field directions in the magnet's frame) add them to
+  every series of its runs.
 - Corrections: `correct_transmission` (attenuators after the I0 monitor) and `correct_absorption` (fluorescence
   yield as a proxy for μ(E)), each recorded in the series.
 - Split peaks: `split.fit_split` compares one and two peaks on a rocking curve, a detector projection or a
