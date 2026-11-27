@@ -6,7 +6,11 @@ and domains tilted against each other reflect at different ω (rocking angle)
 or, out of the scattering plane, at different ν (detector row). Summing the
 ROI into a rocking curve keeps only the ω part, so a splitting mainly in 2θ
 or ν shows up there as a broad or skewed peak. Fitting the `(step, x)` map,
-or `(step, y)`, keeps it.
+or `(step, y)`, keeps it. In reciprocal space the two effects separate
+physically: [`local_coords`][cristallina_scipp.rsm.local_coords] turns each
+pixel's hkl into strain along the reciprocal vector and tilts across it, and
+a [`histogram`][cristallina_scipp.rsm.histogram] in those coordinates is
+fitted the same way.
 
 [`fit_split`][cristallina_scipp.split.fit_split] fits one peak and two
 peaks to the same data and compares them, so that a reported splitting is a
@@ -17,6 +21,11 @@ stack = cs.reduce_scan(scan, channels.JF, channels.JF_I0, roi=roi, cutoff=7.0, p
 image = (stack / stack.coords["i0"]).sum("y")        # (step, x): rocking angle and 2θ
 fit = fit_split(image, coords={"step": "readback"})
 fit["delta_bic"], fit["two"]["separation"]
+
+# or in reciprocal space (needs the [rsm] extra for pixel_hkl)
+stack = local_coords(pixel_hkl(stack, sample, detector, energy), (2, 0, 0), sample.sample_dict)
+rsm = histogram(stack, strain=edges_e, tilt_1=edges_t, tilt_2=edges_t)
+fit = fit_split(rsm, exposure="exposure", coupling=False)
 ```
 """
 
@@ -40,87 +49,89 @@ def _fwhm(sigma, gamma):
 class _Model:
     """Sum of `n` peaks, each a product of 1-D profiles along the axes, plus a planar background.
 
+    Evaluated at points: `points[k]` holds every point's coordinate along axis
+    k (a grid's coordinates broadcast, or each voxel's mean pixel position).
     Peak positions are written as a shared centre `c{k}` and separation `s{k}`
     per axis (peak 0 at c - s/2, peak 1 at c + s/2) with intensity fractions
     `ratio` and 1 - `ratio`, so the separation and its error come straight
     out of the fit. Widths are shared by the two peaks. With `coupling`, the
-    position along each detector axis may move linearly with the scan axis
-    (`k{j}`), as from the beam's energy spread or divergence.
+    position along each later axis may move linearly with the first
+    (`k{j}`), as the beam's energy spread or divergence does on the detector.
     """
 
-    def __init__(self, axes, n, shape, coupling):
-        self.axes, self.n, self.shape, self.coupling = axes, n, shape, coupling and len(axes) > 1
-        self.grids = np.meshgrid(*axes, indexing="ij")
-        self.mid = [a.mean() for a in axes]
+    def __init__(self, points, n, shape, coupling):
+        self.points, self.n, self.shape = points, n, shape
+        self.coupling = coupling and len(points) > 1
+        self.mid = [float(np.mean(x)) for x in points]
 
     def profile(self, k, x, p):
         sigma = p[f"sig{k}"] if self.shape != "lorentzian" else 0.0
         gamma = p[f"gam{k}"] if self.shape != "gaussian" else 0.0
         return voigt_profile(x, sigma, gamma)
 
-    def peak(self, p, i):
-        sign = (-0.5, 0.5)[i] if self.n == 2 else 0.0
-        centre = [p[f"c{k}"] + sign * p.get(f"s{k}", 0.0) for k in range(len(self.axes))]
-        shape = [len(a) for a in self.axes]
-        out = self.profile(0, self.axes[0] - centre[0], p).reshape([-1] + [1] * (len(shape) - 1))
-        for k in range(1, len(self.axes)):
-            if self.coupling:  # position along axis k drifts with the scan axis
-                arg = self.grids[k] - centre[k] - p[f"k{k}"] * (self.grids[0] - centre[0])
-                index = tuple(slice(None) if j in (0, k) else 0 for j in range(len(shape)))
-                out = out * self.profile(k, arg[index], p).reshape([shape[j] if j in (0, k) else 1 for j in range(len(shape))])
-            else:
-                out = out * self.profile(k, self.axes[k] - centre[k], p).reshape([shape[k] if j == k else 1 for j in range(len(shape))])
-        return out
-
-    def __call__(self, p):
+    def __call__(self, p, points=None):
+        points = self.points if points is None else points
         fractions = (p["ratio"], 1 - p["ratio"]) if self.n == 2 else (1.0,)
-        y = sum(p["amp"] * f * self.peak(p, i) for i, f in enumerate(fractions))
-        background = p["bg"] + sum(p[f"bg{k}"] * (g - m) for k, (g, m) in enumerate(zip(self.grids, self.mid)))
-        return y + background
+        y = p["bg"] + sum(p[f"bg{k}"] * (x - m) for k, (x, m) in enumerate(zip(points, self.mid)))
+        for i, fraction in enumerate(fractions):
+            sign = (-0.5, 0.5)[i] if self.n == 2 else 0.0
+            centre = [p[f"c{k}"] + sign * p.get(f"s{k}", 0.0) for k in range(len(points))]
+            peak = self.profile(0, points[0] - centre[0], p)
+            for k in range(1, len(points)):
+                drift = p[f"k{k}"] * (points[0] - centre[0]) if self.coupling else 0.0
+                peak = peak * self.profile(k, points[k] - centre[k] - drift, p)
+            y = y + p["amp"] * fraction * peak
+        return y
 
 
 def _params(model, start):
     params = lmfit.Parameters()
     for name, value in start.items():
         params.add(name, value=value)
-    for k, axis in enumerate(model.axes):
-        params[f"c{k}"].set(min=axis.min(), max=axis.max())
-        floor = 1e-3 * np.min(np.abs(np.diff(axis)))  # a Voigt with both widths 0 is undefined
+    for k, x in enumerate(model.points):
+        span = float(np.ptp(x))
+        params[f"c{k}"].set(min=float(x.min()), max=float(x.max()))
         for w, unused in (("sig", "lorentzian"), ("gam", "gaussian")):
             if model.shape == unused:
                 params[f"{w}{k}"].set(value=0.0, vary=False)
             else:
-                params[f"{w}{k}"].set(min=floor)
+                params[f"{w}{k}"].set(min=1e-6 * span)  # a Voigt with both widths 0 is undefined
         if model.n == 2:
-            span = np.ptp(axis)
             params[f"s{k}"].set(min=0 if k == 0 else -span, max=span)  # s0 >= 0 labels the peaks
     params["amp"].set(min=0)
     if model.n == 2:
         params["ratio"].set(min=0, max=1)
-    params.pop("k0", None)  # the scan axis does not couple to itself
+    params.pop("k0", None)  # the first axis does not couple to itself
     if not model.coupling:
-        for k in range(1, len(model.axes)):
+        for k in range(1, len(model.points)):
             params.pop(f"k{k}", None)
     return params
 
 
-def _fit(model, counts, scale, start):
+def _fit(model, counts, scale, start, max_nfev=None):
     """Maximum Poisson likelihood: least squares on deviance residuals of the counts."""
-    mask = np.isfinite(counts) & np.isfinite(scale)
-    n = counts[mask]
 
     def residual(p):
-        mu = np.maximum(model(p.valuesdict())[mask] / scale[mask], 1e-12)
-        d = 2 * (mu - n + xlogy(n, n / mu))
-        return np.sign(n - mu) * np.sqrt(np.maximum(d, 0))
+        mu = np.maximum(model(p.valuesdict()) / scale, 1e-12)
+        d = 2 * (mu - counts + xlogy(counts, counts / mu))
+        return np.sign(counts - mu) * np.sqrt(np.maximum(d, 0))
 
-    result = lmfit.minimize(residual, _params(model, start), method="leastsq", scale_covar=False)
+    params = start if isinstance(start, lmfit.Parameters) else _params(model, start)
+    result = lmfit.minimize(residual, params, method="leastsq", scale_covar=False, max_nfev=max_nfev)
+    if max_nfev is not None:  # a short exploratory run: no error analysis
+        result.deviance = result.chisqr
+        return result
     nvarys = result.nvarys  # the model's free parameters, for the BIC, even if some are fixed below
-    if not result.errorbars:  # a parameter on its bound (e.g. a Lorentzian width of 0) makes the covariance singular
+    for _ in range(3):  # a parameter on its bound (e.g. a Lorentzian width of 0) makes the covariance singular
+        if result.errorbars:
+            break
         params = result.params.copy()
-        for par in params.values():
-            if par.vary and np.isclose(par.value, [par.min, par.max], rtol=1e-6, atol=1e-12).any():
-                par.vary = False  # report it without an error rather than lose every error
+        at_bound = [par for par in params.values()
+                    if par.vary and np.isclose(par.value, [par.min, par.max], rtol=1e-3, atol=0).any()]
+        if not at_bound:
+            break
+        for par in at_bound:
+            par.vary = False  # report it without an error rather than lose every error
         result = lmfit.minimize(residual, params, method="leastsq", scale_covar=False)
     result.deviance = result.chisqr  # sum of squared deviance residuals
     result.k = nvarys
@@ -129,17 +140,15 @@ def _fit(model, counts, scale, start):
     return result
 
 
-def _summary(result, model, units, dims, coords, data):
+def _summary(result, model, names, units, data, all_points):
     p = result.params
-    names = [coords[d] for d in dims]
-
     inflate = np.sqrt(max(1.0, result.dispersion))  # errors grow with scatter beyond Poisson, never shrink
 
     def scalar(name, unit):
         err = inflate * float(p[name].stderr) if p[name].vary and p[name].stderr is not None else np.nan
         return sc.scalar(float(p[name].value), variance=err**2, unit=unit)
 
-    axes = range(len(dims))
+    axes = range(len(names))
     out = {
         "fwhm": sc.DataGroup({names[k]: sc.scalar(_fwhm(p[f"sig{k}"].value, p[f"gam{k}"].value), unit=units[k]) for k in axes}),
         "sigma": sc.DataGroup({names[k]: scalar(f"sig{k}", units[k]) for k in axes}),
@@ -156,15 +165,15 @@ def _summary(result, model, units, dims, coords, data):
         })
     if model.coupling:
         out["coupling"] = sc.DataGroup({names[k]: scalar(f"k{k}", None if units[k] is None or units[0] is None
-                                                         else units[k] / units[0]) for k in range(1, len(dims))})
+                                                         else units[k] / units[0]) for k in range(1, len(names))})
+    best = model(p.valuesdict(), [x.ravel() for x in all_points]).reshape(data.shape)
     out |= {"deviance": result.deviance, "dispersion": result.dispersion, "bic": result.bic,
-            "best_fit": sc.DataArray(sc.array(dims=dims, values=model(p.valuesdict()), unit=data.unit),
-                                     coords={c: data.coords[c] for c in coords.values()}),
+            "best_fit": sc.DataArray(sc.array(dims=data.dims, values=best, unit=data.unit), coords=dict(data.coords)),
             "result": result}
     return sc.DataGroup(out)
 
 
-def fit_split(da, coords=None, shape="voigt", coupling=True) -> sc.DataGroup:
+def fit_split(da, coords=None, shape="voigt", coupling=True, exposure=None) -> sc.DataGroup:
     """Fit one peak and two peaks to 1-, 2- or 3-D data and compare them.
 
     Each peak is a product of profiles along the axes (Gaussian, Lorentzian
@@ -188,6 +197,16 @@ def fit_split(da, coords=None, shape="voigt", coupling=True) -> sc.DataGroup:
     strong evidence for two peaks; near or below zero the data do not need a
     second peak, whatever the two-peak fit returns.
 
+    The standard errors of the two-peak parameters mean something only when
+    `split` is True: two peaks closer than about twice their width look like
+    one broader peak, the fit can trade width for separation, and the errors
+    from the curvature of the likelihood are then far too small.
+
+    On a [`histogram`][cristallina_scipp.rsm.histogram] the model is
+    evaluated at each voxel's `mean_<dim>` coordinates, the exposure-weighted
+    mean position of the pixels in it, rather than at voxel centres, so the
+    voxel size does not bias the fit; empty voxels are left out.
+
     The peaks are labelled so that the most significant separation is
     positive: peak `p1` lies at the larger coordinate along that axis, and
     `ratio` is the fraction in `p0`.
@@ -200,64 +219,97 @@ def fit_split(da, coords=None, shape="voigt", coupling=True) -> sc.DataGroup:
             and, with more parameters, gives weaker evidence.
         coords: `{dim: coordinate name}` for the axes, e.g.
             `{"step": "readback", "x": "two_theta"}`. Dimensions not listed use
-            the coordinate of the same name.
+            `mean_<dim>` if present (from `histogram`), else the coordinate
+            of the same name. Results are keyed by the names given here, else
+            by dimension.
         shape: `"voigt"`, `"lorentzian"` or `"gaussian"`.
         coupling: For 2-D and 3-D data, let the peak position along each
-            detector axis move linearly with the scan axis.
+            detector axis move linearly with the scan axis. Not needed in
+            reciprocal-space coordinates.
+        exposure: Name of a coordinate, or a Variable, with the summed I0 per
+            point, such that `values = counts / exposure`: the `exposure` of a
+            [`histogram`][cristallina_scipp.rsm.histogram]. Points with zero
+            exposure (no pixel landed there) are left out. Without it, the
+            scale is taken from the values and variances.
 
     Returns:
         A DataGroup with `one` and `two` (the fitted parameters with standard
             errors as variances: `center`, `separation`, `ratio`, `fwhm`,
-            `sigma`, `gamma` and `coupling` keyed by coordinate name, the `peaks` positions,
+            `sigma`, `gamma` and `coupling` per axis, the `peaks` positions,
             `deviance`, `dispersion`, `bic`, `best_fit` and the lmfit `result`),
             `delta_bic`, and `split` (True if `delta_bic > SPLIT_EVIDENCE`).
     """
     dims = list(da.dims)
-    coords = {d: (coords or {}).get(d, d) for d in dims}
-    axes = [da.coords[coords[d]].values.astype(float) for d in dims]
+    given = coords or {}
+    coords = {d: given.get(d, f"mean_{d}" if f"mean_{d}" in da.coords else d) for d in dims}
+    names = [given.get(d, d) for d in dims]  # results are keyed by the coordinate asked for, else the dimension
+    points = []
+    for d in dims:
+        c = da.coords[coords[d]]
+        c = sc.midpoints(c, d) if da.coords.is_edges(coords[d], d) else c
+        points.append(sc.broadcast(c, sizes=da.sizes).transpose(dims).values.astype(float))
     units = [da.coords[coords[d]].unit for d in dims]
     y = da.values.astype(float)
     if da.variances is None:
         raise ValueError("fit_split needs variances (reduce with photon_energy) to weight and compare the fits")
     var = da.variances.astype(float)
-    # values = scale * counts and variances = scale**2 * counts, so scale = variance / value where
-    # there are counts; empty points take their scan step's scale (normalisation is per step)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        scale = np.where((y > 0) & (var > 0), var / y, np.nan)
-    rest = tuple(range(1, y.ndim))
-    per_step = np.nanmedian(scale, axis=rest, keepdims=True) if rest else np.full_like(scale, np.nanmedian(scale))
-    scale = np.where(np.isfinite(scale), scale, np.broadcast_to(per_step, scale.shape))
-    scale = np.where(np.isfinite(scale), scale, np.nanmedian(scale))
-    counts = y / scale
+    if exposure is not None:
+        e = (da.coords[exposure] if isinstance(exposure, str) else exposure).values.astype(float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            scale = np.where(e > 0, 1 / e, np.nan)
+    else:
+        # values = scale * counts and variances = scale**2 * counts, so scale = variance / value where
+        # there are counts; empty points take their scan step's scale (normalisation is per step)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            scale = np.where((y > 0) & (var > 0), var / y, np.nan)
+        rest = tuple(range(1, y.ndim))
+        per_step = np.nanmedian(scale, axis=rest, keepdims=True) if rest else np.full_like(scale, np.nanmedian(scale))
+        scale = np.where(np.isfinite(scale), scale, np.broadcast_to(per_step, scale.shape))
+        scale = np.where(np.isfinite(scale), scale, np.nanmedian(scale))
+    mask = np.isfinite(y) & np.isfinite(scale) & np.all([np.isfinite(x) for x in points], axis=0)
+    fit = _compare([x[mask] for x in points], y[mask] / scale[mask], scale[mask], shape, coupling)
+    return sc.DataGroup({
+        "one": _summary(fit["one"], fit["one_model"], names, units, da, points),
+        "two": _summary(fit["two"], fit["two_model"], names, units, da, points),
+        "delta_bic": fit["delta_bic"],
+        "split": bool(fit["delta_bic"] > SPLIT_EVIDENCE),
+    })
 
-    ndim = len(dims)
-    one = _Model(axes, 1, shape, coupling)
+
+def _compare(points, counts, scale, shape, coupling):
+    """One-peak fit, the best two-peak fit from a grid of starts, and their BIC difference."""
+    y = counts * scale
+    ndim = len(points)
+    one = _Model(points, 1, shape, coupling)
     # start: centroid and RMS width of the background-subtracted data, per axis
-    w = np.clip(y - np.nanpercentile(y, 10), 0, None)
-    start = {"bg": float(np.nanpercentile(y, 10)), "amp": 0.0}
-    for k in range(ndim):
-        marginal = w.sum(axis=tuple(j for j in range(ndim) if j != k))
-        c = float(np.average(axes[k], weights=marginal)) if marginal.sum() > 0 else float(axes[k].mean())
-        rms = np.sqrt(np.average((axes[k] - c) ** 2, weights=marginal)) if marginal.sum() > 0 else np.ptp(axes[k]) / 4
-        width = max(rms, np.min(np.abs(np.diff(axes[k])))) / 2
+    bg = float(np.percentile(y, 10))
+    w = np.clip(y - bg, 0, None)
+    start = {"bg": bg}
+    norm = 1.0
+    for k, x in enumerate(points):
+        c = float(np.average(x, weights=w)) if w.sum() > 0 else float(x.mean())
+        rms = float(np.sqrt(np.average((x - c) ** 2, weights=w))) if w.sum() > 0 else float(np.ptp(x)) / 4
+        width = max(rms, 1e-3 * float(np.ptp(x))) / 2
         start |= {f"c{k}": c, f"sig{k}": width, f"gam{k}": width, f"bg{k}": 0.0, f"k{k}": 0.0}
-    volume = np.prod([np.abs(np.mean(np.diff(a))) for a in axes])
-    start["amp"] = float(w.sum() * volume)
+        norm *= np.sqrt(2 * np.pi) * width
+    start["amp"] = float(w.max() * norm)  # height times the volume of a unit-height Gaussian
     fit1 = _fit(one, counts, scale, start)
 
-    two = _Model(axes, 2, shape, coupling)
+    two = _Model(points, 2, shape, coupling)
     p1 = fit1.params.valuesdict()
     fwhm = [_fwhm(p1[f"sig{k}"], p1[f"gam{k}"]) for k in range(ndim)]
-    best = None
-    grid = [(0.0, 0.6)] + [(-0.6, 0.0, 0.6)] * (ndim - 1)  # separations in units of the one-peak FWHM
+    # every start on a grid of separations (in units of the one-peak FWHM) runs briefly; the two
+    # best are then converged, which finds the same optimum as converging all at a fraction of the cost
+    grid = [(0.0, 0.6)] + [(-0.6, 0.0, 0.6)] * (ndim - 1)
+    trials = []
     for steps in itertools.product(*grid):
         if not any(steps):
             continue
         seed = dict(p1) | {f"s{k}": steps[k] * fwhm[k] for k in range(ndim)} | {"ratio": 0.5}
         seed |= {f"{w}{k}": 0.7 * p1[f"{w}{k}"] for k in range(ndim) for w in ("sig", "gam")}
-        fit2 = _fit(two, counts, scale, seed)
-        if best is None or fit2.deviance < best.deviance:
-            best = fit2
+        trials.append(_fit(two, counts, scale, seed, max_nfev=30 * (len(seed) + 1)))
+    trials.sort(key=lambda r: r.deviance)
+    best = min((_fit(two, counts, scale, r.params) for r in trials[:2]), key=lambda r: r.deviance)
 
     # Label the peaks so the most significant separation is positive (peak 1 at the larger
     # coordinate along that axis): the same model, with the peaks swapped
@@ -268,9 +320,4 @@ def fit_split(da, coords=None, shape="voigt", coupling=True) -> sc.DataGroup:
         best.params["ratio"].value = 1 - best.params["ratio"].value
     phi = max(1.0, best.dispersion)
     delta = (fit1.deviance - best.deviance) / phi - np.log(best.ndata) * (best.k - fit1.k)
-    return sc.DataGroup({
-        "one": _summary(fit1, one, units, dims, coords, da),
-        "two": _summary(best, two, units, dims, coords, da),
-        "delta_bic": delta,
-        "split": bool(delta > SPLIT_EVIDENCE),
-    })
+    return {"one": fit1, "one_model": one, "two": best, "two_model": two, "delta_bic": delta}

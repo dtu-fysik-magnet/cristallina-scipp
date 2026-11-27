@@ -17,6 +17,7 @@ nav = [
     {"Find the sample" = "how-to/sample-search.md"},
     {"Describe the experiment" = "how-to/catalogue.md"},
     {"Correct for transmission and absorption" = "how-to/corrections.md"},
+    {"Decide whether a reflection is split" = "how-to/split-peaks.md"},
     {"Use scattering angles" = "how-to/pixel-angles.md"},
     {"Map cristallina code" = "how-to/from-cristallina.md"},
   ]},
