@@ -252,8 +252,9 @@ def split_series(scans, detector, i0=None, roi=None, *, labels=None, axis="x", t
         shape: Peak shape, `"voigt"`, `"lorentzian"` or `"gaussian"`.
 
     Returns:
-        A DataGroup with `summary`, a Dataset along `run` with `delta_bic`,
-            `split`, `dispersion`, the domain fraction `ratio`, and per axis
+        A DataGroup with `summary`, a Dataset along `run` with `delta_bic`
+            (BIC of one peak minus BIC of two, see
+            [`fit_split`][cristallina_scipp.split.fit_split]), `split`, `dispersion`, the domain fraction `ratio`, and per axis
             the two-peak `separation_<axis>` and `fwhm_<axis>` and the
             one-peak `center_<axis>`, with the run metadata, labels and
             provenance as coordinates (as `run_series`); `maps`, the data
@@ -295,3 +296,50 @@ def split_series(scans, detector, i0=None, roi=None, *, labels=None, axis="x", t
                          **reduce_kwargs)
     return sc.DataGroup({"summary": summary, "maps": sc.DataGroup(maps), "best_fit": sc.DataGroup(best),
                          "settings": settings})
+
+
+def add_field_angles(series, axis, toward, *, min_field=0.01) -> sc.DataGroup:
+    """Field direction of every run, relative to the sample, from the measured field vector.
+
+    With â the sample `axis` and t̂ the direction `toward`, made perpendicular
+    to â (both in the vector magnet's x, y, z frame, e.g. `axis=(0, 0, 1)` if
+    the sample's c axis lies along the magnet's z):
+
+    - `field_angle` (deg) = atan2(B·t̂, B·â): 0 for B along â, 90 for B along
+      t̂, signed, in the plane of â and t̂ (the plane a field rotation from
+      B ∥ c to B ∥ b sweeps, with â = c and t̂ = b);
+    - `field_tilt` (deg): the angle of B out of that plane.
+
+    Both are NaN where |B| < `min_field` (T), where the direction means
+    nothing. `axis` and `toward` may also be one vector per run, shape
+    `(runs, 3)`, for series that combine samples mounted differently.
+
+    Returns:
+        A copy of the series with the two coordinates added to `summary` and
+            the directions recorded in `settings`.
+    """
+    summary = series["summary"]
+    if "field_angle" in summary.coords:
+        raise ValueError("the series already has a field_angle coordinate (a catalogue label?); rename the label, "
+                         "e.g. to nominal_field_angle")
+    b = np.stack([summary.coords[f"field_{c}"].to(unit="T").values for c in "xyz"], axis=-1)
+    a = np.broadcast_to(np.asarray(axis, dtype=float), b.shape)
+    t = np.broadcast_to(np.asarray(toward, dtype=float), b.shape)
+    a = a / np.linalg.norm(a, axis=-1, keepdims=True)
+    t = t - np.sum(t * a, axis=-1, keepdims=True) * a
+    norm = np.linalg.norm(t, axis=-1, keepdims=True)
+    if np.any(norm < 1e-9):
+        raise ValueError("toward is parallel to axis")
+    t = t / norm
+    n = np.cross(a, t)
+    ba, bt, bn = (np.sum(b * v, axis=-1) for v in (a, t, n))
+    weak = np.linalg.norm(b, axis=-1) < min_field
+    out = series.copy()
+    out["summary"] = summary.copy()
+    for name, values in (("field_angle", np.arctan2(bt, ba)), ("field_tilt", np.arctan2(bn, np.hypot(ba, bt)))):
+        out["summary"].coords[name] = sc.array(dims=["run"], values=np.where(weak, np.nan, np.degrees(values)),
+                                               unit="deg")
+    out["settings"] = series["settings"].copy()
+    fmt = lambda v: "; ".join(" ".join(f"{x:g}" for x in row) for row in np.unique(np.atleast_2d(v), axis=0))  # noqa: E731
+    out["settings"]["field_axis"], out["settings"]["field_toward"] = fmt(axis), fmt(toward)
+    return out

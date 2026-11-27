@@ -79,7 +79,25 @@ runs = "467-486"
 sample = "S1"
 ```
 
-A remounted or realigned sample gets a new entry. The detector for each run comes from `[[geometry]]` and the run's
+A remounted or realigned sample gets a new entry.
+
+### Field direction
+
+The vector magnet records the field's x, y and z components for every run. Give two sample directions in the
+magnet's frame, and every series of that sample's runs gets the field direction as coordinates, computed from the
+measured field instead of typed in:
+
+```toml
+[samples."S1"]
+# ...
+field_axis = [0, 0, 1]     # the sample's c axis lies along the magnet's z
+field_toward = [0, 1, 0]   # and its b axis along y
+```
+
+`field_angle` is the angle of B from `field_axis`, towards `field_toward` (0° for B ∥ c, 90° for B ∥ b, signed),
+and `field_tilt` the angle of B out of that plane; both are NaN for fields below 0.01 T. Don't also give the groups
+a `field_angle` label: the measured one takes that name. For a series built without a catalogue, use
+[`add_field_angles`][cristallina_scipp.series.add_field_angles]. The detector for each run comes from `[[geometry]]` and the run's
 motor positions ([`cat.detector(run)`][cristallina_scipp.catalogue.Catalogue.detector]), and
 [`cat.to_q(run, stack, reflection)`][cristallina_scipp.catalogue.Catalogue.to_q] adds h, k, l and the strain and
 tilts around a reflection to a reduced run.
