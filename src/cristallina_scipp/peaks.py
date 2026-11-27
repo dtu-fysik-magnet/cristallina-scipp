@@ -2,7 +2,7 @@
 
 import numpy as np
 import scipp as sc
-from lmfit.models import GaussianModel, LinearModel, LorentzianModel
+from lmfit.models import GaussianModel, LinearModel, LorentzianModel, VoigtModel
 from scipy.signal import find_peaks, peak_widths
 
 _FWHM_PER_SIGMA = 2 * np.sqrt(2 * np.log(2))
@@ -42,7 +42,9 @@ def fit_peaks(da, n=1, shape="lorentzian", prominence=0.05, distance=5, coord=No
         da: 1-D DataArray, e.g. a rocking curve from
             [`roi_intensities`][cristallina_scipp.roi_intensities] divided by I0.
         n: Number of peaks.
-        shape: `"lorentzian"` or `"gaussian"`.
+        shape: `"lorentzian"`, `"gaussian"` or `"voigt"` (exact, via the Faddeeva
+            function; Gaussian `sigma` and Lorentzian `gamma` both free, reported
+            per peak).
         prominence: Minimum peak prominence as a fraction of `max(da)`.
         distance: Minimum separation between peaks, in points.
         coord: Name of the x coordinate, e.g. `"readback"`. Defaults to the
@@ -68,19 +70,22 @@ def fit_peaks(da, n=1, shape="lorentzian", prominence=0.05, distance=5, coord=No
         raise ValueError(f"found {found.size} peak(s), asked for {n}; lower prominence or distance")
     widths = peak_widths(y, found, rel_height=0.5)[0] * np.mean(np.diff(x))
 
-    peak_model = {"lorentzian": LorentzianModel, "gaussian": GaussianModel}[shape]
+    peak_model = {"lorentzian": LorentzianModel, "gaussian": GaussianModel, "voigt": VoigtModel}[shape]
     model = LinearModel(prefix="bg_")
     params = model.make_params(intercept=np.nanmin(y), slope=0.0)
     for i, (p, w) in enumerate(zip(found, np.abs(widths))):
         m = peak_model(prefix=f"p{i}_")
         model += m
-        sigma = max(w, abs(x[1] - x[0])) / (2 if shape == "lorentzian" else _FWHM_PER_SIGMA)
-        area = (y[p] - np.nanmin(y)) * sigma * (np.pi if shape == "lorentzian" else np.sqrt(2 * np.pi))
+        w = max(w, abs(x[1] - x[0]))
+        sigma = w / {"lorentzian": 2, "gaussian": _FWHM_PER_SIGMA, "voigt": 3.6013}[shape]
+        area = (y[p] - np.nanmin(y)) * w * {"lorentzian": np.pi / 2, "gaussian": 1.0645, "voigt": 1.3}[shape]
         params.update(m.make_params(
             center={"value": x[p], "min": x.min(), "max": x.max()},
             sigma={"value": sigma, "min": 0},
             amplitude={"value": area, "min": 0},
         ))
+        if shape == "voigt":  # lmfit ties gamma to sigma by default
+            params[f"p{i}_gamma"].set(value=sigma, vary=True, expr="", min=0)
 
     result = model.fit(y, params, x=x, weights=weights, nan_policy="omit")
 
@@ -96,6 +101,7 @@ def fit_peaks(da, n=1, shape="lorentzian", prominence=0.05, distance=5, coord=No
             "fwhm": scalar(f"p{i}_fwhm", xu),
             "height": scalar(f"p{i}_height", yu),
             "area": scalar(f"p{i}_amplitude", None if xu is None or yu is None else xu * yu),
+            **({"sigma": scalar(f"p{i}_sigma", xu), "gamma": scalar(f"p{i}_gamma", xu)} if shape == "voigt" else {}),
         })
         for i in range(found.size)
     }

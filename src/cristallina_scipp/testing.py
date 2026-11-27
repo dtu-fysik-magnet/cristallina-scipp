@@ -280,3 +280,79 @@ def example_experiment(base):
 def march_2026(base):
     """Write all three synthetic March runs under `base`; returns `{run: scan.json}`."""
     return {45: fluorescence_energy_scan(base), 51: translation_scan(base), 55: rocking_scan(base)}
+
+
+def split_rocking_scan(base, run=56, seed=4, d_omega=0.0, d_x=0.0, d_y=0.0, ratio=0.5, fwhm=BRAGG["fwhm"],
+                       sigma_px=BRAGG["sigma_px"], drift=0.0, scale=1.0):
+    """Rocking curve of a reflection split into two domains, with known splitting.
+
+    The two peaks sit at ω = center ∓ `d_omega`/2 (deg), detector column
+    x ∓ `d_x`/2 and row y ∓ `d_y`/2 (pixels), with intensity fractions `ratio`
+    and 1 − `ratio`. Each is a Lorentzian of `fwhm` (deg) in ω times a
+    Gaussian spot of `sigma_px`; `drift` (px/deg) moves the spots along x
+    with ω. A tetragonal-to-orthorhombic distortion gives both: different
+    d-spacings (`d_x`, through 2θ) and tilted twin domains (`d_omega`, `d_y`).
+    """
+    rng = np.random.default_rng(seed)
+    thetas = np.arange(-18.5, -17.49, 0.025)
+    yy, xx = np.mgrid[: SHAPE[0], : SHAPE[1]]
+    domains = [(-0.5, ratio), (0.5, 1 - ratio)]
+    steps = []
+    for i, t in enumerate(thetas):
+        peak = np.full(SHAPE, 5e-4)
+        for sign, fraction in domains:
+            c = BRAGG["center"] + sign * d_omega
+            x0, y0 = BRAGG["x"] + sign * d_x + drift * (t - c), BRAGG["y"] + sign * d_y
+            rock = (fwhm / 2) ** 2 / ((t - c) ** 2 + (fwhm / 2) ** 2)
+            spot = np.exp(-0.5 * ((xx - x0) ** 2 + (yy - y0) ** 2) / sigma_px**2)
+            peak += 1.2 * scale * fraction * rock * spot
+        steps.append(_step(rng, i, np.full(SHAPE, 1e-4), peak, 7.511, 7.511))
+    pvs = [_pvs(7511.0, **{"SARES31-GPS:ROTTHETA": t}) for t in thetas]
+    return write_scan(Path(base) / f"run{run:04}", thetas, steps, name="SARES31-GPS:ROTTHETA", units="deg", pvs=pvs)
+
+
+TAS2 = {"a": 0.336, "b": 0.336, "c": 0.5853, "alp": 90, "bet": 90, "gam": 120}
+
+
+def split_rsm_stack(d_strain=0.0, d_tilt_1=0.0, d_tilt_2=0.0, ratio=0.5, sigma_strain=0.002, sigma_tilt=0.15,
+                    peak=20.0, background=0.5, seed=5):
+    """A rocking scan through (0 0 2) with two domains, as a reduced stack with `h`, `k`, `l` and local coordinates.
+
+    Uses `cristallina.rsm`'s geometry (the RSM tutorial's 1T-TaS2 at 9 keV;
+    needs the `[rsm]` extra). The domains sit at strain ∓ `d_strain`/2 and
+    tilts ∓ `d_tilt_1`/2, ∓ `d_tilt_2`/2 (deg) of the reflection
+    ([`local_coords`][cristallina_scipp.rsm.local_coords] with `toward=(1, 0, 0)`),
+    with fractions `ratio` and 1 − `ratio`; each is Gaussian with widths
+    `sigma_strain` and `sigma_tilt` (deg). Counts are Poisson, scaled by a
+    per-step I0.
+    """
+    import cristallina.rsm as crsm
+
+    from .rsm import local_coords, pixel_hkl
+
+    sample = crsm.Sample(dict(TAS2), "1T-TaS2")
+    detector = crsm.Detector(R_m=0.15, px_size_um=75, center_pixel=(515, 807), detector_size_px=(1030, 1614))
+    energy = 9000.0
+    k = crsm.E_to_k(energy)
+    detector.move_angles(gamma=2 * np.degrees(np.arcsin(2 * np.pi * 2 / TAS2["c"] / (2 * k))))
+    alpha = np.linspace(10, 20, 41)
+    import scipp as sc
+
+    template = sc.DataArray(
+        sc.zeros(dims=["step", "y", "x"], shape=[alpha.size, 120, 120], unit="counts"),
+        coords={"readback": sc.array(dims=["step"], values=alpha, unit="deg"),
+                "y": sc.arange("y", 747, 867, unit=None), "x": sc.arange("x", 455, 575, unit=None)},
+    )
+    stack = local_coords(pixel_hkl(template, sample, detector, energy), (0, 0, 2), TAS2, toward=(1, 0, 0))
+    e, t1, t2 = (stack.coords[c].values for c in ("strain", "tilt_1", "tilt_2"))
+    rate = np.full(e.shape, background)
+    for sign, fraction in ((-0.5, ratio), (0.5, 1 - ratio)):
+        rate += peak * fraction * np.exp(-0.5 * (((e - sign * d_strain) / sigma_strain) ** 2
+                                                + ((t1 - sign * d_tilt_1) / sigma_tilt) ** 2
+                                                + ((t2 - sign * d_tilt_2) / sigma_tilt) ** 2))
+    rng = np.random.default_rng(seed)
+    i0 = rng.uniform(0.5, 1.5, alpha.size)
+    stack.values = rng.poisson(rate * i0[:, None, None]).astype(float)
+    stack.variances = stack.values.copy()
+    stack.coords["i0"] = sc.array(dims=["step"], values=i0)
+    return stack
