@@ -130,6 +130,27 @@ class Catalogue:
 
         return SFScanInfo(str(self.scan_path(run)))
 
+    def overview(self, runs=None):
+        """[`run_overview`][cristallina_scipp.series.run_overview] of `raw`, with each run's group(s).
+
+        `group` is empty for runs no group lists, which is what to look at
+        when bringing the catalogue up to date; a run in two groups shows both,
+        separated by "; ". Runs a group lists but `raw` lacks appear with status
+        "not in raw".
+        """
+        from .series import run_overview
+
+        table = run_overview(self.raw, runs)
+        groups = {}
+        for name in self.groups:
+            for run in self.runs(name):
+                groups.setdefault(run, []).append(name)
+        listed = set(groups) if runs is None else set(groups) & set(runs)
+        for run in sorted(listed - set(table.index)):
+            table.loc[run, "status"] = "not in raw"
+        table["group"] = [("; ".join(groups.get(run, []))) for run in table.index]
+        return table.sort_index()
+
     def series(self, groups, detector=None, i0=None, **kwargs):
         """[`run_series`][cristallina_scipp.series.run_series] over one group or several.
 

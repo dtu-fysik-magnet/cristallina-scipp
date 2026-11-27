@@ -52,3 +52,11 @@ cat.geometry(470)                # calibration for angles.geometry_from_step
 scan = cat.scan(470)             # SFScanInfo
 series = cat.series("energy 0T", cutoff=7.0, i0_cutoff=2.5, photon_energy=7.511)
 ```
+
+## Keep it up to date
+
+[`cat.overview()`][cristallina_scipp.catalogue.Catalogue.overview] lists every run in `raw` with what it scanned, its
+energy, field and transmission, and the group(s) it belongs to. Runs with an empty `group` are the ones still to
+describe; `status` flags runs still being written and runs a group lists that are not in `raw`. The
+[experiment template](https://github.com/dtu-fysik-magnet/cristallina-scipp/blob/main/notebooks/experiment_template.ipynb)
+starts with this table.

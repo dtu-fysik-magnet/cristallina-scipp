@@ -14,6 +14,9 @@ there, with photon-counting errors carried through every step.
 - **Correct**: transmission and absorption corrections, recorded in the result.
 - **Map**: scattering angles and binned reciprocal-space maps.
 
+Start an analysis by copying `notebooks/experiment_template.ipynb`: run overview, energy and field series,
+corrections, and saved results, from one shared run catalogue.
+
 Documentation: <https://dtu-fysik-magnet.github.io/cristallina-scipp/>
 
 ## Install
