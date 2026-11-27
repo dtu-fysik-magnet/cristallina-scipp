@@ -1,0 +1,39 @@
+# Run catalogue for the synthetic runs used in the run-series tutorial.
+# One file per experiment, shared by everyone; see docs/how-to/catalogue.md.
+raw = "raw"  # relative to this file
+
+[rois]
+"peak A" = { left = 0, right = 64, bottom = 22, top = 38 }
+"peak B" = { left = 0, right = 64, bottom = 22, top = 38 }
+"peak B 3T" = { left = 0, right = 64, bottom = 18, top = 42 }  # the peak broadens at high field
+
+[[geometry]]  # detector calibration (keywords of angles.geometry_from_step)
+runs = "1-100"
+x0 = 416.81
+y0 = 775.27
+d0 = 0.568
+z0 = 0.2
+stt0 = -0.09935076
+
+[groups."energy 0T"]
+runs = "60-68"  # ranges are inclusive
+roi = "peak A"
+sample = "S1"
+reflection = "A"
+note = "rocking curves across the absorption edge, 0 T"
+
+[groups."field 0deg"]
+runs = "70-73"
+roi = { "70-72" = "peak B", "73" = "peak B 3T" }
+sample = "S1"
+reflection = "B"
+field_angle = 0.0
+note = "rocking curves at 0, 1, 2 and 3 T, at the edge"
+
+[groups."field 15deg"]
+runs = "74-77"
+roi = "peak B"
+sample = "S1"
+reflection = "B"
+field_angle = 15.0
+note = "as above, field rotated by 15 deg"

@@ -1,0 +1,46 @@
+[project]
+name = "cristallina-scipp"
+version = "0.1.0"
+description = "scipp views of SwissFEL/Cristallina data: sfdata -> scipp adapter and binned reciprocal-space maps"
+requires-python = ">=3.11"  # tomllib
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Gregory Tucker", email = "gregory.tucker@ess.eu" }]
+dependencies = [
+    "numpy",
+    "scipp>=25.0",
+    "plopp",
+    "lmfit",
+    "scipy",
+    "h5py",
+    # Not on PyPI ("sfdata" there is an unrelated package), so install from the
+    # public repositories; uv.lock pins the commits.
+    "sfdata @ git+https://github.com/paulscherrerinstitute/sf_datafiles.git",
+    "jungfrau_utils @ git+https://github.com/paulscherrerinstitute/jungfrau_utils.git",
+    # imported by sfdata and jungfrau_utils, which declare no dependencies
+    "bitshuffle",
+    "colorama",
+    "numba",
+    "pandas",
+    "tqdm",
+    "xarray",
+]
+
+[project.optional-dependencies]
+# cristallina.rsm, for pixel_hkl. Its repository carries ~200 MB of test data.
+rsm = [
+    "cristallina @ git+https://gitea.psi.ch/Cristallina/cristallina_analysis_package.git",
+    # imported by cristallina (image.py, rsm.py) but not declared by it
+    "scikit-image",
+    "uncertainties",
+]
+notebook = ["jupyterlab", "ipympl"]
+test = ["pytest"]
+docs = ["cristallina-scipp[rsm]", "zensical", "mkdocstrings-python"]  # the RSM tutorial runs cristallina.rsm
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
