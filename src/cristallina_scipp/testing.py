@@ -209,6 +209,74 @@ def rocking_scan(base, run=55, seed=3, field=1.5, shift_per_tesla=0.0, energy=75
     return write_scan(Path(base) / f"run{run:04}", thetas, steps, name="SARES31-GPS:ROTTHETA", units="deg", pvs=pvs)
 
 
+EXAMPLE_CATALOGUE = """\
+# Synthetic experiment written by cristallina_scipp.testing.example_experiment.
+raw = "raw"
+
+[rois]
+"peak A" = { left = 0, right = 64, bottom = 22, top = 38 }
+"peak B" = { left = 0, right = 64, bottom = 22, top = 38 }
+
+[[geometry]]
+runs = "1-100"
+x0 = 416.81
+y0 = 775.27
+d0 = 0.568
+z0 = 0.2
+stt0 = -0.09935076
+
+[groups."fluorescence"]
+runs = "45"
+note = "energy scan across the edge, fluorescence window"
+
+[groups."energy 0T"]
+runs = "60-68"
+roi = "peak A"
+sample = "S1"
+reflection = "A"
+note = "rocking curves across the edge, 0 T"
+
+[groups."field 0deg"]
+runs = "70-73"
+roi = "peak B"
+sample = "S1"
+reflection = "B"
+field_angle = 0.0
+
+[groups."field 15deg"]
+runs = "74-77"
+roi = "peak B"
+sample = "S1"
+reflection = "B"
+field_angle = 15.0
+"""
+
+
+def example_experiment(base):
+    """A small synthetic experiment with a catalogue, for the template notebook and dry runs.
+
+    Writes under `base`: `raw/run0045` (fluorescence energy scan), runs 60-68
+    (rocking curves across the edge, suppressed by absorption above it),
+    70-73 and 74-77 (field series in two directions), run 78 (an alignment
+    scan no group lists), run 79 without `scan.json` (still being written),
+    and `experiment.toml`. Returns the catalogue path.
+    """
+    base = Path(base)
+    raw = base / "raw"
+    fluorescence_energy_scan(raw, run=45)
+    for i, run in enumerate(range(60, 69)):
+        e = 7495.0 + 4 * i
+        rocking_scan(raw, run=run, seed=run, field=0.0, energy=e, scale=resonance(e) / edge(e))
+    for first, shift in ((70, 0.02), (74, 0.012)):
+        for run, field in zip(range(first, first + 4), [0.0, 1.0, 2.0, 3.0]):
+            rocking_scan(raw, run=run, seed=run, field=field, shift_per_tesla=shift)
+    rocking_scan(raw, run=78, seed=78)
+    (raw / "run0079" / "data").mkdir(parents=True)
+    path = base / "experiment.toml"
+    path.write_text(EXAMPLE_CATALOGUE)
+    return path
+
+
 def march_2026(base):
     """Write all three synthetic March runs under `base`; returns `{run: scan.json}`."""
     return {45: fluorescence_energy_scan(base), 51: translation_scan(base), 55: rocking_scan(base)}

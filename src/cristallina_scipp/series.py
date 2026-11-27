@@ -13,9 +13,11 @@ pp.plot(series["summary"]["integral"], coords=["photon_energy"])
 ```
 """
 
+import json
 import warnings
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 import numpy as np
 import scipp as sc
@@ -58,6 +60,58 @@ def run_metadata(scan) -> dict[str, sc.Variable]:
         "transmission_exp": sc.scalar(exp),
         "transmission": sc.scalar(fe * exp),
     }
+
+
+def run_overview(raw, runs=None):
+    """One row per run in a raw-data folder: what was scanned, and at which energy, field and transmission.
+
+    Reads each `run*/meta/scan.json` and the first step's PVs
+    ([`run_metadata`][cristallina_scipp.series.run_metadata]). A run without a
+    `scan.json` yet (still being written) or with unreadable files is listed
+    with its `status` instead of being skipped, so gaps are visible.
+
+    Args:
+        raw: Folder that holds the `runNNNN` directories.
+        runs: Run numbers to include; all by default.
+
+    Returns:
+        A `pandas.DataFrame` indexed by run, with columns `status`, `scanned`
+            (adjustable name), `unit`, `start`, `stop`, `steps`, and the
+            `run_metadata` values in their units (`photon_energy` keV,
+            `mono_energy` eV, `field*` T, `transmission*`).
+    """
+    import pandas as pd
+    from sfdata import SFScanInfo
+
+    rows = {}
+    for run_dir in sorted(Path(raw).glob("run[0-9][0-9][0-9][0-9]")):
+        run = int(run_dir.name[3:])
+        if runs is not None and run not in runs:
+            continue
+        path = run_dir / "meta" / "scan.json"
+        if not path.exists():
+            rows[run] = {"status": "no scan.json"}
+            continue
+        info = json.loads(path.read_text())
+        readbacks = [r[0] for r in info.get("scan_readbacks", []) if r]
+        row = {"status": "ok", "scanned": ", ".join(info["scan_parameters"]["name"]),
+               "unit": ", ".join(info["scan_parameters"]["units"]),
+               "start": readbacks[0] if readbacks else np.nan, "stop": readbacks[-1] if readbacks else np.nan,
+               "steps": len(info.get("scan_files", []))}
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                meta = run_metadata(SFScanInfo(str(path)))
+            row |= {k: v.value for k, v in meta.items()}
+            if caught:
+                row["status"] = "missing PVs"
+        except Exception as err:  # noqa: BLE001 -- an overview lists broken runs, it does not stop at them
+            row["status"] = f"unreadable: {type(err).__name__}"
+        rows[run] = row
+    table = pd.DataFrame.from_dict(rows, orient="index").rename_axis("run")
+    if "steps" in table:
+        table["steps"] = table["steps"].astype("Int64")
+    return table
 
 
 def _peak(curve, shape):
