@@ -1,0 +1,41 @@
+name: release
+
+# Push a tag vX.Y.Z on main: build the wheel and source tarball, check that they carry
+# that version, and attach them to a GitHub Release whose notes are the changelog's
+# section for the version. The docs workflow publishes the documentation on the same tag.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the version comes from the tag
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - name: built version matches the tag
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          ls dist
+          test -f "dist/cristallina_scipp-${expected}-py3-none-any.whl"
+      - name: release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" {take=1; next}
+            take && /^## \[/ {exit}
+            take {print}
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG.md has no section '## [$version]'; rename [Unreleased] before tagging" >&2
+            exit 1
+          fi
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

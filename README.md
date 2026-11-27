@@ -22,8 +22,11 @@ Documentation: <https://dtu-fysik-magnet.github.io/cristallina-scipp/>
 ## Install
 
 ```sh
-pip install "cristallina-scipp @ git+https://github.com/dtu-fysik-magnet/cristallina-scipp.git"
+pip install "cristallina-scipp @ git+https://github.com/dtu-fysik-magnet/cristallina-scipp.git@v0.1.0"
 ```
+
+Pick a [release](https://github.com/dtu-fysik-magnet/cristallina-scipp/releases); changes are in
+[CHANGELOG.md](CHANGELOG.md).
 
 This fetches `sfdata` and `jungfrau_utils` from their public repositories. Add the `[rsm]` extra for
 reciprocal-space maps (it downloads `cristallina`, about 200 MB). Python 3.11 or 3.12; see the
