@@ -26,6 +26,9 @@ dependencies = [
     "xarray",
 ]
 
+[project.scripts]
+cristallina-catalogue = "cristallina_scipp.catalogue:main"
+
 [project.optional-dependencies]
 # cristallina.rsm, for pixel_hkl. Its repository carries ~200 MB of test data.
 rsm = [

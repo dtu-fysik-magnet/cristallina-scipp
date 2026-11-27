@@ -31,7 +31,7 @@ from pathlib import Path
 
 PGROUP = "p2xxxx"
 DATA_ROOT = Path(os.environ.get("CRISTALLINA_DATA", "/sf/cristallina/data"))
-CATALOGUE = DATA_ROOT / PGROUP / "work" / "catalogue.toml"      # one shared file per experiment
+CATALOGUE = DATA_ROOT / PGROUP / "work" / "catalogue"           # shared checkout (cristallina-catalogue setup)
 RESULTS = DATA_ROOT / PGROUP / "work" / "results" / os.environ.get("USER", "me")
 
 # One set of reduction settings for every series that ends up on the same plot.
@@ -192,7 +192,7 @@ for name, series in ((ENERGY_GROUP + " corrected", corrected), (" + ".join(FIELD
     print("saved", path)
 
 back = sc.io.load_hdf5(saved[ENERGY_GROUP + " corrected"])
-for key in ("groups", "catalogue_sha256", "corrections", "i0", "cutoff", "cristallina_scipp", "created"):
+for key in ("groups", "catalogue_commit", "catalogue_sha256", "corrections", "i0", "cutoff", "cristallina_scipp", "created"):
     value = back["settings"][key]
     print(f"{key}: {value.value} {value.unit}" if isinstance(value, sc.Variable) else f"{key}: {value}")
 """)
