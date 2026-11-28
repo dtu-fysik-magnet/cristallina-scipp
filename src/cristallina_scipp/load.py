@@ -12,6 +12,8 @@ import jungfrau_utils
 import numpy as np
 import scipp as sc
 
+from . import channels
+
 
 @dataclass
 class ROI:
@@ -311,3 +313,36 @@ def roi_intensities(da, rois) -> sc.DataArray:
     out = sc.concat([crop(da, r).sum(["y", "x"]) for r in rois], "roi")
     out.coords["roi"] = sc.array(dims=["roi"], values=[r.name for r in rois])
     return out
+
+
+def pixel_energies(scan, step, detector=channels.JF, threshold=2.5, bins=None) -> sc.DataArray:
+    """Histogram of the energies of the pixels hit in one or more steps, over every pulse.
+
+    The fluorescence line, the elastic line (at the incident energy) and the
+    noise peak show up as separate peaks, so this is how to choose the
+    `cutoff` and `upper_cutoff` windows of
+    [`reduce_scan`][cristallina_scipp.reduce_scan]: compare a step below an
+    absorption edge with one above it. It reads whole steps, so pick a few.
+
+    Args:
+        scan: An `SFScanInfo`.
+        step: Step index, or several (e.g. `range(5)`), histogrammed together.
+        detector: Jungfrau channel (values in keV).
+        threshold: Pixel values at or below this (keV) are not counted as hits.
+        bins: Bin edges (a Variable in keV along `energy`) or a number of bins
+            from `threshold` to 10 keV; 150 by default.
+
+    Returns:
+        Hits per energy bin, with an `energy` bin-edge coordinate.
+    """
+    values = []
+    for i in [step] if isinstance(step, (int, np.integer)) else step:
+        with _open(scan, i) as data:
+            v = np.asarray(data[detector].data, dtype=float).ravel()
+        values.append(v[v > threshold])
+    hits = np.concatenate(values)
+    if bins is None or isinstance(bins, int):
+        bins = sc.linspace("energy", threshold, 10.0, (bins or 150) + 1, unit="keV")
+    counts = sc.DataArray(sc.ones(dims=["hit"], shape=[hits.size], unit="counts"),
+                          coords={"energy": sc.array(dims=["hit"], values=hits, unit="keV")})
+    return counts.hist(energy=bins)

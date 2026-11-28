@@ -4,7 +4,7 @@
 
 ::: cristallina_scipp.load
     options:
-      members: [ROI, channel, step, reduce_scan, scan_means, roi_intensities, crop, to_photons]
+      members: [ROI, channel, step, reduce_scan, scan_means, pixel_energies, roi_intensities, crop, to_photons]
       show_root_heading: false
 
 ## Run catalogue
