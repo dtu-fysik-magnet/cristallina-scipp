@@ -9,6 +9,8 @@ in an existing notebook or catalogue.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-28
+
 The first release. Everything below is new.
 
 ### Added

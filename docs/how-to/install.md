@@ -79,6 +79,14 @@ To make a release, on an up-to-date `main`:
     git push origin v0.2.0
     ```
 
-The release workflow builds the package, checks that it carries the tag's version, and creates the GitHub Release
-with the changelog section as its notes; the docs workflow publishes the documentation. To move the pinned `sfdata`
+   Or create the release by hand from the merged `main`, which pushes the tag for you:
+
+    ```sh
+    awk '/^## \[0.2.0\]/{take=1; next} take && /^## \[/{exit} take' CHANGELOG.md > notes.md
+    gh release create v0.2.0 --target main --title v0.2.0 --notes-file notes.md
+    ```
+
+The release workflow builds the package, checks that it carries the tag's version, and attaches the wheel and
+source tarball to the GitHub Release, creating it with the changelog section as its notes if needed; the docs
+workflow publishes the documentation. To move the pinned `sfdata`
 or `jungfrau_utils` commits, change them in `pyproject.toml`, run `uv lock`, and note it in the changelog.
