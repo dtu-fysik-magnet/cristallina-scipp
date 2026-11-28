@@ -3,7 +3,7 @@
 ## Anywhere else
 
 `sfdata` and `jungfrau_utils` are not on PyPI (the `sfdata` there is an unrelated package), so `pyproject.toml`
-names their public repositories and pip or uv fetch them from git.
+names their public repositories, pinned to tested commits, and pip or uv fetch them from git.
 
 !!! warning "Python 3.13 and later: get bitshuffle from conda-forge"
     `sfdata` needs `bitshuffle.h5`. bitshuffle publishes PyPI wheels only up to Python 3.12; on newer Pythons pip
@@ -11,10 +11,14 @@ names their public repositories and pip or uv fetch them from git.
     (`ModuleNotFoundError: No module named 'bitshuffle.h5'` on `import sfdata`). In a conda environment,
     `conda install -c conda-forge bitshuffle` first.
 
+Install a release (see [versions](#versions-and-releases)):
+
 ```sh
-pip install /path/to/cristallina-scipp            # or git+<this repository's URL>
-pip install "/path/to/cristallina-scipp[rsm]"     # adds cristallina, for cristallina_scipp.rsm.pixel_hkl
+pip install "cristallina-scipp @ git+https://github.com/dtu-fysik-magnet/cristallina-scipp.git@v0.1.0"
+pip install "cristallina-scipp[rsm] @ git+https://github.com/dtu-fysik-magnet/cristallina-scipp.git@v0.1.0"  # adds cristallina, for rsm.pixel_hkl
 ```
+
+or a local checkout, `pip install /path/to/cristallina-scipp`.
 
 `cristallina` is optional because its repository carries about 200 MB of test data, which pip and uv download in full
 (uv shows no progress while it does). Only the RSM needs it: [`ROI`][cristallina_scipp.ROI] and the channel names
@@ -51,3 +55,38 @@ print(cristallina_scipp.__file__, scipp.__version__)
 !!! warning "Importing cristallina patches jungfrau_utils"
     `import cristallina` replaces `jungfrau_utils.file_adapter.locate_gain_file` and `locate_pedestal_file`. If you
     mock those, for example to read data offline, do it after importing cristallina.
+
+## Versions and releases
+
+Releases are tagged `vX.Y.Z` on GitHub, with the wheel and source tarball attached and the documentation published
+for each. Before 1.0, a minor release (0.2 → 0.3) may change or remove things notebooks and saved files rely on; a
+patch release (0.2.0 → 0.2.1) does not. [`CHANGELOG.md`](https://github.com/dtu-fysik-magnet/cristallina-scipp/blob/main/CHANGELOG.md)
+says what changed and, for anything that breaks, what to do. Install one release for a whole beamtime, so everyone
+on shift runs the same code.
+
+The version comes from the git tag. A checkout between releases reports a version such as `0.2.1.dev3+gabc1234`
+(three commits after 0.2.0, at commit `abc1234`), and saved series record it in `settings["cristallina_scipp"]`, so
+every result names the code that made it.
+
+To make a release, on an up-to-date `main`:
+
+1. In `CHANGELOG.md`, rename "Unreleased" to the version and date, e.g. `## [0.2.0] - 2027-02-15`, and start a new
+   empty "Unreleased" section above it; merge that as a pull request.
+2. Tag the merge commit and push the tag:
+
+    ```sh
+    git tag -a v0.2.0 -m "cristallina-scipp 0.2.0"
+    git push origin v0.2.0
+    ```
+
+   Or create the release by hand from the merged `main`, which pushes the tag for you:
+
+    ```sh
+    awk '/^## \[0.2.0\]/{take=1; next} take && /^## \[/{exit} take' CHANGELOG.md > notes.md
+    gh release create v0.2.0 --target main --title v0.2.0 --notes-file notes.md
+    ```
+
+The release workflow builds the package, checks that it carries the tag's version, and attaches the wheel and
+source tarball to the GitHub Release, creating it with the changelog section as its notes if needed; the docs
+workflow publishes the documentation. To move the pinned `sfdata`
+or `jungfrau_utils` commits, change them in `pyproject.toml`, run `uv lock`, and note it in the changelog.
