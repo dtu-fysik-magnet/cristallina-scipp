@@ -1,13 +1,10 @@
 name: release
 
-# Push a tag vX.Y.Z on main, or create the release by hand with `gh release create`
-# (which pushes the tag): build the wheel and source tarball, check that they carry
-# that version, and attach them to the release, creating it with the changelog's
-# section for the version as its notes if it does not exist yet. The docs workflow
-# publishes the documentation on the same tag.
+# On each published release, build the wheel and source tarball, check that they carry
+# the tag's version, and attach them to the release.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -21,29 +18,7 @@ jobs:
           fetch-depth: 0  # the version comes from the tag
       - uses: astral-sh/setup-uv@v6
       - run: uv build
-      - name: built version matches the tag
-        run: |
-          expected="${GITHUB_REF_NAME#v}"
-          ls dist
-          test -f "dist/cristallina_scipp-${expected}-py3-none-any.whl"
-      - name: release notes from CHANGELOG.md
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '
-            $0 ~ "^## \\[" v "\\]" {take=1; next}
-            take && /^## \[/ {exit}
-            take {print}
-          ' CHANGELOG.md > notes.md
-          if [ ! -s notes.md ]; then
-            echo "CHANGELOG.md has no section '## [$version]'; rename [Unreleased] before tagging" >&2
-            exit 1
-          fi
-      - name: attach to the release
-        run: |
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
-          fi
+      - run: test -f "dist/cristallina_scipp-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+      - run: gh release upload "$GITHUB_REF_NAME" dist/*
         env:
           GH_TOKEN: ${{ github.token }}

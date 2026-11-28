@@ -72,21 +72,12 @@ To make a release, on an up-to-date `main`:
 
 1. In `CHANGELOG.md`, rename "Unreleased" to the version and date, e.g. `## [0.2.0] - 2027-02-15`, and start a new
    empty "Unreleased" section above it; merge that as a pull request.
-2. Tag the merge commit and push the tag:
-
-    ```sh
-    git tag -a v0.2.0 -m "cristallina-scipp 0.2.0"
-    git push origin v0.2.0
-    ```
-
-   Or create the release by hand from the merged `main`, which pushes the tag for you:
+2. Create the release from the merged `main`, with that section as its notes:
 
     ```sh
     awk '/^## \[0.2.0\]/{take=1; next} take && /^## \[/{exit} take' CHANGELOG.md > notes.md
     gh release create v0.2.0 --target main --title v0.2.0 --notes-file notes.md
     ```
 
-The release workflow builds the package, checks that it carries the tag's version, and attaches the wheel and
-source tarball to the GitHub Release, creating it with the changelog section as its notes if needed; the docs
-workflow publishes the documentation. To move the pinned `sfdata`
-or `jungfrau_utils` commits, change them in `pyproject.toml`, run `uv lock`, and note it in the changelog.
+The release workflow attaches the wheel and source tarball, after checking they carry the tag's version; the docs
+workflow publishes the documentation. To move the pinned `sfdata` or `jungfrau_utils` commits, change them in `pyproject.toml`, run `uv lock`, and note it in the changelog.
