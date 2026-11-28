@@ -1,12 +1,11 @@
 name: docs
 
-# Build on pull requests (to catch breakage); publish to GitHub Pages on each release tag.
-# (A tag push, not the release event: the release workflow creates the release with the
-# workflow token, and events caused by that token do not start other workflows.)
-# Pages must be set to "GitHub Actions" in the repository settings.
+# Build on pull requests (to catch breakage); publish to GitHub Pages on each release.
+# Pages must be set to "GitHub Actions" in the repository settings, and the github-pages
+# environment must allow tags v* (it allows only the default branch out of the box).
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
   pull_request:
   workflow_dispatch:
 
